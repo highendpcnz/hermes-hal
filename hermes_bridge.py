@@ -874,12 +874,30 @@ def drop_session(cookie_id: str) -> None:
     _event_queues.pop(cookie_id, None)
 
 
+def _with_session_token_hint(text: str, session_id: str) -> str:
+    """Prepend the real browser session id so the model has something correct
+    to echo back as `session_token` on hal-robot MCP tool calls.
+
+    Nothing else in this bridge ever tells the model that value — there is no
+    ACP field or MCP resource carrying it across today. Without this hint the
+    model must invent a session_token, and a permission_request published
+    against an invented id reaches no browser's SSE stream: the Allow/Deny bar
+    never appears, however long the arm request blocks (confirmed live,
+    2026-09-06 — request_motion_authorization/crawl_arm calls that returned
+    "working" and then nothing, because the event went nowhere anyone was
+    watching). The hint is cheap and harmless on turns that never touch a
+    robot tool, so it is sent unconditionally rather than gated on tool use.
+    """
+    return f"[session_token for any hal-robot tool call: {session_id}]\n\n{text}"
+
+
 async def ask_hermes(text: str, session_id: str) -> str:
     """Send one utterance to Hermes and return its reply text."""
     assert _session_map is not None, "hermes_bridge.init() not called"
     if not await asyncio.to_thread(_network_available):
         print("[hermes_bridge] offline preflight blocked remote inference")
         return OFFLINE_LINE
+    text = _with_session_token_hint(text, session_id)
     async with _cookie_locks.hold(session_id):
         if _acp_bridge is not None:
             result = await _acp_bridge.ask(text, session_id)

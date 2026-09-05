@@ -34,11 +34,21 @@ from mcp.server.mcpserver import Image, MCPServer
 
 BRIDGE_URL = os.environ.get("HAL_BRIDGE_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT = float(os.environ.get("HAL_ROBOT_TOOL_TIMEOUT", "30"))
+# /internal/robot/authorize and /internal/robot/crawl/arm block server-side for
+# up to robot_tools.MOTION_PERMISSION_TIMEOUT (5 minutes by default) waiting on
+# a human's Allow/Deny — that is the whole point of the call, not a hang. A
+# client-side timeout shorter than the server's own wait means the MCP call
+# always dies before a person could ever approve it, which is exactly what
+# happened live (confirmed 2026-09-06: crawl_arm timed out twice at ~30.1s
+# each, Hermes gave up and fell back to blind exploration instead). Padded a
+# few seconds past the server's wait so a genuine server-side timeout is what
+# actually fires, not a race between the two.
+ARM_TIMEOUT = float(os.environ.get("HAL_ROBOT_ARM_TIMEOUT", "310"))
 
 server = MCPServer("hal-robot")
 
 
-def _post(path: str, payload: dict) -> dict:
+def _post(path: str, payload: dict, *, timeout: float = TIMEOUT) -> dict:
     request = Request(
         f"{BRIDGE_URL}{path}",
         data=json.dumps(payload).encode(),
@@ -46,7 +56,7 @@ def _post(path: str, payload: dict) -> dict:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=TIMEOUT) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
     except HTTPError as error:
         try:
@@ -79,7 +89,7 @@ def request_motion_authorization(
             "motion": motion, "speed_pct": speed_pct,
             "distance_cm": distance_cm, "angle_degrees": angle_degrees,
         },
-    })
+    }, timeout=ARM_TIMEOUT)
 
 
 @server.tool()
@@ -134,9 +144,11 @@ def look(session_token: str):
 def crawl_arm(session_token: str) -> dict:
     """Ask the operator to authorise ONE autonomous crawl episode. This does not
     move the robot. On approval you may repeat crawl_observe then crawl_step
-    until the budget runs out: 25 cm total, 5 cm per step, 10% speed, 60
-    seconds. Every step needs its own fresh camera assessment."""
-    return _post("/internal/robot/crawl/arm", {"session_token": session_token})
+    until the budget runs out: 200 cm total, 15 cm per step, 10% speed, 300
+    seconds. Every step needs its own fresh camera assessment. This call can
+    legitimately take several minutes to return — it is waiting on a person,
+    not hung."""
+    return _post("/internal/robot/crawl/arm", {"session_token": session_token}, timeout=ARM_TIMEOUT)
 
 
 @server.tool()
