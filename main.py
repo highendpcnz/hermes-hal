@@ -40,7 +40,6 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from faster_whisper import WhisperModel
 from piper import PiperVoice, SynthesisConfig
 from pydantic import BaseModel
 
@@ -53,8 +52,16 @@ import mission_control
 import speaker_id
 
 APP_DIR = Path(__file__).resolve().parent
+# The voice model ships in this repository. Preferring it over the Hermes venv's
+# copy is what the isolation rule asks for — no provider-owned path searched
+# implicitly — and it is also the only one that exists on the phone, where there
+# is no ~/.hermes/voices at all. The Hermes copy is still used if it is there and
+# the repo's is not, so an existing desktop install is unaffected.
+_repo_voice = APP_DIR / "models" / "hal.onnx"
+_hermes_voice = Path(os.path.expanduser("~/.hermes/voices/hal9000/hal9000.onnx"))
+_default_voice = _repo_voice if _repo_voice.exists() else _hermes_voice
 VOICE_PATH = Path(
-    os.path.expanduser(os.environ.get("HAL_VOICE", "~/.hermes/voices/hal9000/hal9000.onnx"))
+    os.path.expanduser(os.environ.get("HAL_VOICE", str(_default_voice)))
 )
 STT_MODEL_NAME = os.environ.get("HAL_STT_MODEL", "base.en")
 STT_BEAM_SIZE = int(os.environ.get("HAL_STT_BEAM", "5"))
@@ -294,6 +301,13 @@ def _load_stt():
         )
         list(segments)
         return model
+
+    # Imported here, not at module scope: on Termux faster-whisper is
+    # deliberately not installed at all (its ctranslate2 build can never load a
+    # Whisper model — see docs/pixel-deployment.md), and a hard import would
+    # stop the whole app from starting on the one platform whisper.cpp exists
+    # to serve. Reached only when the whisper.cpp branch above declined.
+    from faster_whisper import WhisperModel
 
     def build(device: str, compute_type: str):
         model = WhisperModel(

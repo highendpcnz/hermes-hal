@@ -91,8 +91,9 @@ from PyPI silently builds a wheel with no C++ in it, `faster-whisper` loads no
 model on Termux, `--no-build-isolation` fails unless the venv is *activated*,
 and pip will otherwise compile CMake itself from source. Each was hours.
 
-`bin/termux-setup` has never been executed — it is derived from hal's verified
-prose, not itself verified. Treat its first run as the test.
+`bin/termux-setup` ran clean on the Pixel on 2026-09-06, and the voice stack it
+builds was verified end to end there — see `pixel-deployment.md` for the
+measurements and for the two bugs that first run found.
 
 ## Transfer ledger
 

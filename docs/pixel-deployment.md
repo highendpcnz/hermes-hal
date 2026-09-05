@@ -91,23 +91,50 @@ orphaned grandchildren keep burning CPU after the parent `pip` is killed.
   This is why `termux_voice.py` defaults to the whisper.cpp backend.
 - **Install Termux and Termux:API by sideloading**, not from the Play Store.
 
+## Verified on the device, 2026-09-06
+
+Run against the Pixel over SSH. `bin/termux-setup` completed clean on its first
+execution (~3 minutes — hal's port had already built `espeak-ng`,
+`whisper.cpp` and `piper1-gpl` on this phone, and pip's cache still held the
+Rust-backed wheels; a fresh device should still budget 15–20 minutes).
+
+| Check | Result |
+| --- | --- |
+| `bin/termux-setup` | exit 0; steps 4 and 6 correctly skipped as already built |
+| `piper` in this repo's own venv | `espeakbridge.so` present — a real compiled bridge, not the empty PyPI wheel |
+| Python suite (`HAL_SKIP_MODELS=1`) | all passed |
+| STT backend selection | `WhisperCppModel`, auto-detected by presence, `device=cpu` |
+| Voice model | loads from the repo's `models/hal.onnx` |
+| TTS | 159,788 bytes in **1.02 s** |
+| STT round trip | HAL's own synthesized line transcribed back verbatim in **3.81 s** |
+| `termux-microphone-record` | captured 2 s, ffmpeg level probe read −21.1 dBFS, passed the −45 dBFS gate |
+
+Two bugs the first run found, both now fixed:
+
+- `main.py` imported `faster_whisper` at module scope, so the app could not
+  start at all on the one platform whisper.cpp exists to serve. The import is
+  now local to the faster-whisper branch of `_load_stt()`.
+- `HAL_VOICE` defaulted to `~/.hermes/voices/hal9000/hal9000.onnx`, which does
+  not exist on the phone — and was a dependency on the Hermes install that the
+  isolation rule asks us not to have. The repo's own `models/hal.onnx` is now
+  preferred, falling back to the Hermes copy so desktop installs are unaffected.
+
+A −21.1 dBFS floor in a quiet room suggests this phone's noise floor sits well
+above the −45 dBFS gate, so the gate is permissive here. It is doing its job
+against digital silence; whether it rejects a genuinely quiet room on this
+hardware has not been measured.
+
 ## What still has to be proven on the device
 
-None of this repo has run on the phone. In rough order:
-
-1. `bin/termux-setup` completes — it has never been executed, only derived.
-2. `HAL_SKIP_MODELS=1 python tests/run.py` passes there.
-3. Piper synthesizes audibly through `termux-media-player play`.
-4. `whisper-cli` decodes a clip recorded by `termux-microphone-record`.
-5. `HAL_TERMUX_LISTEN=1` — the wake phrase, a real turn, and the sign-off.
-6. **Hermes Agent itself runs on Termux.** This is the largest untested
-   assumption in this document: hal's port proved the *voice* stack on Android
-   against a local Gemma brain, and says nothing about this repo's agent
-   backend. Verify Luna subscription access with an authenticated inference
-   test before claiming that path works.
-7. Battery: Android killed hal's Termux twice before a battery exemption was
+1. **Hermes Agent itself does not exist on this phone** — no binary, no
+   `~/.hermes`. Everything above is the voice stack answering with no brain
+   behind it. This is now the single largest open item, and it is independent
+   of every transfer: it could have been tested first. Verify Luna subscription
+   access with an authenticated inference test before claiming that path works.
+2. A full `HAL_TERMUX_LISTEN=1` conversation — wake phrase, turn, spoken
+   sign-off — which needs (1) first.
+3. Audible playback through `termux-media-player`. hal confirmed this on this
+   handset; this repo's own path has not been listened to.
+4. Battery: Android killed hal's Termux twice before a battery exemption was
    set, and that exemption was never verifiable from inside Termux
    (`dumpsys` is blocked). It only proves itself by surviving a long idle.
-
-Steps 1–5 are the ones this transfer was for. Step 6 is independent of it and
-could be tested first, on its own.
