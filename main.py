@@ -9,6 +9,7 @@ Fork of https://huggingface.co/spaces/piclez/hal rewired to run fully local:
 Run with the Hermes venv:  ./run.sh   (or see README.md)
 """
 import ast
+import base64
 import importlib.util
 import io
 import json
@@ -2185,6 +2186,34 @@ def robot_move(body: RobotToolCall):
         )
     else:
         result = robot_tools.turn(None, payload["angle_degrees"], payload["speed_pct"])
+    return JSONResponse(result)
+
+
+@app.post("/internal/robot/look")
+def robot_look(_body: RobotToolCall):
+    """One camera frame, base64-encoded so it survives this JSON hop.
+
+    The MCP server turns it into an image content block; keeping the encoding
+    here means the bytes cross exactly one boundary in one format. Gated by
+    HAL_ROBOT_CAMERA for privacy, not safety — a frame is a picture of the
+    room, and with a cloud brain it leaves the device.
+    """
+    result, image_bytes = robot_tools.capture_visual_scene(data_dir=DATA_DIR)
+    if image_bytes is None:
+        return JSONResponse(result)
+    result["mime_type"] = "image/jpeg"
+    if robot_tools.VISION_RAW:
+        # Only useful once the endpoint accepts images in tool results; see
+        # robot_tools.VISION_RAW.
+        result["image_base64"] = base64.b64encode(image_bytes).decode()
+        return JSONResponse(result)
+    described = robot_tools.describe_frame(image_bytes)
+    if described.get("ok"):
+        result["description"] = described["description"]
+    else:
+        # The frame was captured; only the captioning failed. Say so rather
+        # than reporting the whole look as a failure.
+        result["description_error"] = described.get("error", "unknown")
     return JSONResponse(result)
 
 

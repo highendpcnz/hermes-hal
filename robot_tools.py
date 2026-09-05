@@ -16,13 +16,11 @@ safety-relevant logic, not a second copy living in the MCP process.
 read-only and always available when hardware is present; anything that turns a
 motor is off by default.
 
-**There is no camera tool here yet.** `robot/camera.py` was transferred and
-works on the Pixel — both the `termux-camera-photo` main-lens path and the
-`app_process` ultra-wide path capture real frames — but nothing calls it. The
-wrappers hal has in its own `robot_tools.py` (`auto_capture_frame`'s backend
-selection, `capture_visual_scene`'s tool result and viewscreen persistence)
-were not ported, and `robot/mcp_server.py` exposes no vision tool. Treat the
-camera as present hardware with no software path to the model. That is not timidity about an unfinished
+**The camera is off unless HAL_ROBOT_CAMERA=1**, and that gate is about
+privacy rather than safety. Sensor readings are three numbers; a frame is a
+picture of the room, and with a cloud brain it leaves the device to be
+inferred on. That should be a deliberate choice, not a side effect of enabling
+robot tools. That is not timidity about an unfinished
 feature — see the delivery limits below, which are properties of the design
 rather than bugs awaiting a fix.
 
@@ -62,6 +60,7 @@ import asyncio
 import json
 import os
 import time
+from pathlib import Path
 from typing import Callable
 
 import hermes_bridge
@@ -153,6 +152,205 @@ def read_spatial_sensors(open_transport: Callable[[], object] | None = None) -> 
             transport.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Vision — gated separately from motion
+# ---------------------------------------------------------------------------
+
+CAMERA_ENABLED = os.environ.get("HAL_ROBOT_CAMERA", "0").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "",
+}
+
+
+def _env(value, key: str, default: str):
+    return value if value is not None else os.environ.get(key, default)
+
+
+def capture_frame_app_process(**overrides) -> tuple[bytes, int, int]:
+    """The ultra-wide path. `termux-camera-photo` can only address logical
+    cameras and always shoots at 1x, which pins it to the main lens; the
+    ultra-wide is reachable only by asking camera2 for a zoom ratio below 1.0
+    (0.556 on this device, ~104 degrees against the main lens's 71), and
+    camera2 needs a real Android runtime. See robot/camera.py."""
+    from robot import camera
+
+    return camera.capture_frame_app_process(
+        zoom=_env(overrides.get("zoom"), "HAL_CAMERA_ZOOM", "widest"),
+        jar_path=_env(overrides.get("jar_path"), "HAL_CAPTURE_JAR", camera.DEFAULT_CAPTURE_JAR),
+        app_process_bin=_env(
+            overrides.get("app_process_bin"), "HAL_APP_PROCESS_BIN", camera.DEFAULT_APP_PROCESS
+        ),
+        boot_image=_env(overrides.get("boot_image"), "HAL_BOOT_IMAGE", camera.DEFAULT_BOOT_IMAGE),
+    )
+
+
+def capture_frame_termux(**_overrides) -> tuple[bytes, int, int]:
+    """The main-lens path: Termux:API plus ffmpeg. Hardware-verified."""
+    from robot import camera
+
+    return camera.capture_frame_termux()
+
+
+def capture_frame_ffmpeg(**_overrides) -> tuple[bytes, int, int]:
+    """The desktop webcam path, used when no phone camera is present."""
+    from robot import camera
+
+    return camera.capture_frame()
+
+
+def auto_capture_frame(
+    *,
+    capture_app_process: Callable[[], tuple[bytes, int, int]] | None = None,
+    capture_termux: Callable[[], tuple[bytes, int, int]] | None = None,
+    capture_ffmpeg: Callable[[], tuple[bytes, int, int]] | None = None,
+    termux_camera_bin: str | None = None,
+) -> tuple[bytes, int, int]:
+    """Pick a backend by real capability, the same way open_robot_transport
+    reads TERMUX_USB_FD rather than testing for "am I on Android".
+
+    On the phone the app_process backend is preferred because it is the only
+    one that reaches the ultra-wide lens — and it degrades to the main lens
+    rather than failing the turn, because a narrower picture is worth more to
+    the caller than an error.
+    """
+    import shutil
+    import sys
+
+    from robot.camera import CameraCaptureError
+
+    termux_camera_bin = _env(termux_camera_bin, "HAL_TERMUX_CAMERA_BIN", "termux-camera-photo")
+    app_process = capture_app_process or capture_frame_app_process
+    termux = capture_termux or capture_frame_termux
+    ffmpeg = capture_ffmpeg or capture_frame_ffmpeg
+
+    if shutil.which(termux_camera_bin):
+        try:
+            return app_process()
+        except CameraCaptureError as error:
+            print(
+                f"[camera] wide-angle capture unavailable, falling back to the main lens: {error}",
+                file=sys.stderr,
+            )
+            return termux()
+    return ffmpeg()
+
+
+def capture_visual_scene(
+    capture: Callable[[], tuple[bytes, int, int]] | None = None,
+    *,
+    data_dir=None,
+) -> tuple[dict, bytes | None]:
+    """Capture one frame. Returns the tool-result dict and the raw JPEG bytes,
+    or (error dict, None). Packaging the bytes for a particular transport is
+    the caller's job — robot/mcp_server.py turns them into an MCP image block."""
+    from robot.camera import CameraCaptureError
+
+    if not CAMERA_ENABLED:
+        return {"ok": False, "error": "camera is disabled (set HAL_ROBOT_CAMERA=1)"}, None
+    try:
+        image_bytes, width, height = (capture or auto_capture_frame)()
+    except CameraCaptureError as error:
+        return {"ok": False, "error": str(error)}, None
+    except Exception as error:  # a bad capture must not kill the turn
+        return {"ok": False, "error": f"{type(error).__name__}: {error}"}, None
+    name = f"capture-{int(time.time() * 1000)}.jpg"
+    if data_dir is not None:
+        viewscreen_dir = data_dir / "viewscreen"
+        viewscreen_dir.mkdir(parents=True, exist_ok=True)
+        (viewscreen_dir / name).write_bytes(image_bytes)
+    return (
+        {"ok": True, "path": name, "width": width, "height": height, "bytes": len(image_bytes)},
+        image_bytes,
+    )
+
+
+# Ollama Cloud's OpenAI-compatible endpoint returns HTTP 500 for an image in a
+# *tool result* message, while the identical image in a *user* message works —
+# measured 2026-09-06, both directions, with a 64x64 solid-colour PNG so size
+# was not a factor. Hermes builds the messages, so this app cannot move the
+# frame into a user turn from inside a tool.
+#
+# So the frame is described where it is captured, and the tool returns prose.
+# The cost is real and worth naming: the describing model sees the picture, the
+# conversing model only reads about it, so anything the caption omits is gone.
+# When the endpoint learns to accept tool-result images, HAL_VISION_RAW=1
+# returns the bytes instead and the caption step disappears.
+VISION_RAW = os.environ.get("HAL_VISION_RAW", "0").strip().lower() not in {"0", "false", "no", ""}
+VISION_MODEL = os.environ.get("HAL_VISION_MODEL", "").strip()
+VISION_PROMPT = os.environ.get(
+    "HAL_VISION_PROMPT",
+    "Describe what is in front of the camera in two short sentences. "
+    "Mention obstacles, their rough direction, and anything a small wheeled "
+    "robot would need to avoid. Do not speculate beyond what is visible.",
+)
+
+
+def _key_from_hermes_env(name: str = "OLLAMA_API_KEY") -> str:
+    """Read one key out of Hermes' own env file.
+
+    The agent loads ~/.hermes/.env itself; this app does not, so a key that is
+    plainly configured looks missing from here. Read it rather than requiring
+    it to be exported twice — one file remains the single place the credential
+    lives, and it is never copied into this app's config.
+    """
+    path = Path(os.path.expanduser(os.environ.get("HAL_HERMES_ENV", "~/.hermes/.env")))
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith(f"{name}=") and not line.startswith("#"):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        return ""
+    return ""
+
+
+def describe_frame(image_bytes: bytes, *, mime_type: str = "image/jpeg") -> dict:
+    """Caption one frame with the vision model. Returns {"ok", "description"}.
+
+    Reads the same provider config the agent uses, so there is one place the
+    endpoint and key are configured rather than a second copy that can drift.
+    """
+    import base64
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    key = os.environ.get("OLLAMA_API_KEY", "").strip() or _key_from_hermes_env()
+    base = os.environ.get("HAL_VISION_BASE_URL", "https://ollama.com/v1").rstrip("/")
+    model = VISION_MODEL or os.environ.get("HAL_VISION_MODEL_DEFAULT", "gemma4:31b")
+    if not key:
+        return {"ok": False, "error": "no OLLAMA_API_KEY for the vision model"}
+
+    payload = {
+        "model": model,
+        "max_tokens": 200,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": VISION_PROMPT},
+            {"type": "image_url", "image_url": {
+                "url": f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"}},
+        ]}],
+    }
+    request = urllib.request.Request(
+        f"{base}/chat/completions",
+        data=_json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=float(
+                os.environ.get("HAL_VISION_TIMEOUT", "60"))) as response:
+            body = _json.load(response)
+    except urllib.error.HTTPError as error:
+        return {"ok": False, "error": f"vision model HTTP {error.code}"}
+    except Exception as error:
+        return {"ok": False, "error": f"vision model unreachable: {error}"}
+    try:
+        return {"ok": True, "description": body["choices"][0]["message"]["content"].strip()}
+    except (KeyError, IndexError):
+        return {"ok": False, "error": "vision model returned no description"}
 
 
 # ---------------------------------------------------------------------------

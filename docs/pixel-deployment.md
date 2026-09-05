@@ -301,6 +301,60 @@ Expect this class of failure from any abi3 Rust extension that omits libpython.
 The diagnosis is quick once known: `readelf -d <ext>.so | grep NEEDED`, and if
 `libpython` is absent, that is the bug.
 
+## Vision
+
+`HAL_ROBOT_CAMERA=1` enables the `look` tool. The gate is about privacy, not
+safety: a sensor reading is three numbers, a frame is a picture of the room,
+and with a cloud brain it leaves the device.
+
+Capture prefers the ultra-wide lens and degrades to the main one rather than
+failing the turn. Measured on the Pixel:
+
+```
+app_process (ultra-wide) : 46234 bytes 640x480  2.27s
+termux (main lens)       : 32858 bytes 640x480  1.64s
+```
+
+### The frame cannot go to the model as a tool result
+
+Ollama Cloud's OpenAI-compatible endpoint returns **HTTP 500 for an image in a
+tool-result message**, while the identical image in a *user* message answers
+correctly. Measured both directions with a 64x64 solid-colour PNG, so size is
+not the factor:
+
+```
+image in a USER message  -> "Red"
+image in a TOOL RESULT   -> HTTP 500
+```
+
+Hermes builds the message list, so this app cannot move the frame into a user
+turn from inside a tool. The frame is therefore **described where it is
+captured** and the tool returns prose:
+
+```
+look -> "Looking through the camera (640x480, saved as capture-….jpg), I can
+         see: Several white and black cables lie across the blue surface in
+         front and to the right. A large, dark object occupies the immediate
+         foreground, and various electronic components are located further
+         ahead."
+```
+
+The cost is real: the describing model sees the picture, the conversing model
+only reads about it, so whatever the caption omits is gone. `HAL_VISION_RAW=1`
+returns the bytes as an MCP image block instead — correct code, currently
+useless, and ready for the day the endpoint accepts tool-result images.
+
+Verified end to end through `/api/say`, in HAL's voice:
+
+```
+HAL   : I see papers on the ground to the left and cables scattered across
+        the floor in front and to the right, Dave.
+turn  : 10.25s   (capture 2.2s + caption 1.4s + agent + TTS)
+```
+
+If captioning fails the frame is still reported as captured, with
+`description_error` — a failed caption is not a failed look.
+
 ## What still has to be proven on the device
 
 1. **No motion has been commanded from this repo.** Sensors are verified

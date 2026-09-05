@@ -124,6 +124,17 @@ process.
 **Motion is off unless `HAL_ROBOT_MOTION=1`.** Sensors and stop are always
 available. Nothing here has touched hardware — see below.
 
+## Sixth increment: vision
+
+`robot/camera.py` came over with the fifth increment and sat unreachable. This
+wires it: hal's `auto_capture_frame` backend selection and `capture_visual_scene`
+were adapted into `robot_tools.py`, with a `look` tool in `robot/mcp_server.py`
+and an `/internal/robot/look` route.
+
+`describe_frame` is **not** from hal — hal's brains own their tool loop and hand
+raw bytes to the model directly, which is not available here (see
+`pixel-deployment.md` on the tool-result 500).
+
 ## Transfer ledger
 
 

@@ -24,12 +24,13 @@ Manual smoke test against a running bridge:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 
 BRIDGE_URL = os.environ.get("HAL_BRIDGE_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT = float(os.environ.get("HAL_ROBOT_TOOL_TIMEOUT", "30"))
@@ -97,6 +98,36 @@ def move(
             "distance_cm": distance_cm, "angle_degrees": angle_degrees,
         },
     })
+
+
+@server.tool()
+def look(session_token: str):
+    """Take one photograph through the robot's camera and return it, so you can
+    see what is in front of the robot. Use this when asked what you can see, or
+    when a decision depends on the scene rather than on a distance reading.
+    Prefers the ultra-wide lens (about 104 degrees) and falls back to the main
+    lens. Returns an error string if the camera is disabled."""
+    result = _post("/internal/robot/look", {"session_token": session_token})
+    if not result.get("ok"):
+        return result.get("error", "camera unavailable")
+    encoded = result.pop("image_base64", None)
+    if encoded:
+        # Raw path — only reachable with HAL_VISION_RAW=1, because Ollama
+        # Cloud returns HTTP 500 for an image in a tool result.
+        return [
+            f"Camera frame: {result.get('width')}x{result.get('height')}, "
+            f"{result.get('bytes')} bytes, saved as {result.get('path')}.",
+            Image(data=base64.b64decode(encoded), format="jpeg"),
+        ]
+    if result.get("description"):
+        return (
+            f"Looking through the camera ({result.get('width')}x{result.get('height')}, "
+            f"saved as {result.get('path')}), I can see: {result['description']}"
+        )
+    return (
+        f"A frame was captured ({result.get('path')}) but it could not be described: "
+        f"{result.get('description_error', 'unknown')}"
+    )
 
 
 @server.tool()
