@@ -1076,27 +1076,47 @@ _WAKE_RE = re.compile(
 )
 
 # Post-STT correction: Whisper base.en renders the spoken name "HAL" as a
-# handful of short monosyllables.  Replacing them unconditionally would mangle
-# real words ("how are you?"), so the pattern fires only in *address position*
-# — start of utterance (with an optional "hey"/"ok" prefix) followed by
-# punctuation (comma, period, etc.).  Whisper reliably inserts a comma after
-# a vocative address, so requiring punctuation is the right boundary.
+# handful of short monosyllables. Replacing them unconditionally would mangle
+# real words, so the rewrite only fires where the text is genuinely an address.
 #
-# This is what lets _WAKE_RE keep its name list at hal/hall/hell: the looser
-# homophones are repaired here, in address position only, before the gate ever
-# sees them. "Hey how, run diagnostics" becomes "Hey HAL, run diagnostics" and
-# wakes; "How are you doing?" has no punctuation boundary, is left alone, and
-# does not.
+# There are two such shapes, and the second was learned from real audio on the
+# Pixel (2026-09-06): HAL's own voice saying "Hey HAL, in one short sentence,
+# what are you?" came back as "Hey how in one short sentence, what are you?" —
+# no comma at all. An earlier version of this required punctuation after the
+# name and therefore refused to wake on the project's own wake phrase.
+#
+#   1. An attention word immediately followed by a name homophone. The
+#      attention word IS the address marker — that is the entire premise of
+#      requiring one — so no punctuation is needed. Guarded by a short list of
+#      words that would make "how" an ordinary question instead ("hey, how are
+#      you?" must survive untouched).
+#   2. No attention word, so punctuation has to do the work: "Hell, open the
+#      log." is an address; "Hell of a day" is not.
+_WAKE_HOMOPHONES = "hall|hell|howl|how|howe|hull"
+# Words that turn a leading "how" back into a question rather than a name.
+_HOW_QUESTION_NEXT = (
+    "are|is|was|were|do|does|did|can|could|would|will|should|have|has|had|"
+    "many|much|long|far|old|come|about|often|soon|big|small|deep|high|fast"
+)
+_HAL_ADDRESS_RE = re.compile(
+    rf"^(\s*(?:hey|hi|ok|okay|hello)[,\s]+)"      # attention word, required
+    rf"(?:{_WAKE_HOMOPHONES})\b"                   # misheard name
+    rf"(?!\s+(?:{_HOW_QUESTION_NEXT})\b)",        # ...not "hey how are you"
+    re.I,
+)
 _HAL_HOMOPHONES_RE = re.compile(
-    r"^(\s*(?:hey|ok|okay)?[,\s]*)"          # optional greeting prefix
-    r"(?:hall|hell|howl|how|howe|hull)\b"     # misheard name
-    r"([,.!?:])",                             # punctuation boundary (no \s)
+    rf"^(\s*(?:hey|hi|ok|okay|hello)?[,\s]*)"     # optional attention word
+    rf"(?:{_WAKE_HOMOPHONES})\b"                   # misheard name
+    rf"([,.!?:])",                                  # punctuation boundary
     re.I,
 )
 
 
 def _normalize_hal_name(text: str) -> str:
     """Replace known STT mishearings of 'HAL' in address position."""
+    fixed = _HAL_ADDRESS_RE.sub(r"\1HAL", text)
+    if fixed != text:
+        return fixed
     return _HAL_HOMOPHONES_RE.sub(r"\1HAL\2", text)
 
 

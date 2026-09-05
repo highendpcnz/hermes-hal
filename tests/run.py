@@ -228,6 +228,20 @@ check(
     "normalized ambient question still does not",
     main._WAKE_RE.match(main._normalize_hal_name("How are you doing?")) is None,
 )
+# Measured on the Pixel, 2026-09-06: HAL's own voice saying "Hey HAL, in one
+# short sentence, what are you?" transcribes with NO comma after the name. An
+# earlier version required punctuation here and so refused to wake on this
+# project's own wake phrase. The attention word is the address marker.
+check(
+    "wake phrase survives whisper dropping the comma",
+    main._WAKE_RE.match(
+        main._normalize_hal_name("Hey how in one short sentence, what are you?")) is not None,
+)
+# ...but the attention word must not swallow ordinary how-questions.
+for _q in ("Hey, how are you doing?", "hey how much does it weigh",
+           "hello how far is the wall", "ok how long will that take"):
+    check(f"attention word does not turn a question into a wake: {_q!r}",
+          main._WAKE_RE.match(main._normalize_hal_name(_q)) is None)
 
 # --- _normalize_hal_name ---------------------------------------------------------
 
