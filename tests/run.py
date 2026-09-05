@@ -268,6 +268,97 @@ check(
     main._normalize_hal_name("HAL, what's our status?") == "HAL, what's our status?",
 )
 
+# --- robot tools: safety gating (transferred from hal) ---------------------------
+
+import robot_tools  # noqa: E402
+import stopwords  # noqa: E402
+
+# Motion is opt-in. This is the single most important default in the file: the
+# CyberPi has never been driven from this repo and none of it is hardware-tested.
+check("motion is disabled by default", robot_tools.MOTION_ENABLED is False)
+check(
+    "run_motion refuses while disabled",
+    robot_tools.run_motion(lambda: (_ for _ in ()).throw(AssertionError("opened transport!")),
+                           lambda c: None)["ok"] is False,
+)
+check(
+    "drive refuses while disabled without opening a transport",
+    robot_tools.drive_straight(
+        lambda: (_ for _ in ()).throw(AssertionError("opened transport!")), 10, 10)["ok"] is False,
+)
+
+# One-use, exact-argument grants. Approving one motion must not authorize another.
+_S = "session-under-test"
+_ARGS = {"distance_cm": 20, "speed_pct": 10}
+robot_tools.grant_motion_for(_S, "drive_straight", robot_tools._canonical(_ARGS),
+                             expires_at=time.monotonic() + 60)
+check(
+    "a grant authorizes its exact motion",
+    robot_tools.check_and_consume_motion_grant(_S, "drive_straight", _ARGS) is None,
+)
+check(
+    "a grant is single-use",
+    robot_tools.check_and_consume_motion_grant(_S, "drive_straight", _ARGS) is not None,
+)
+
+robot_tools.grant_motion_for(_S, "drive_straight", robot_tools._canonical(_ARGS),
+                             expires_at=time.monotonic() + 60)
+check(
+    "a grant does not authorize a longer drive",
+    robot_tools.check_and_consume_motion_grant(
+        _S, "drive_straight", {"distance_cm": 50, "speed_pct": 10}) is not None,
+)
+robot_tools.grant_motion_for(_S, "drive_straight", robot_tools._canonical(_ARGS),
+                             expires_at=time.monotonic() + 60)
+check(
+    "a grant does not authorize a different tool",
+    robot_tools.check_and_consume_motion_grant(
+        _S, "turn", {"angle_degrees": 20, "speed_pct": 10}) is not None,
+)
+robot_tools.grant_motion_for(_S, "drive_straight", robot_tools._canonical(_ARGS),
+                             expires_at=time.monotonic() - 1)
+check(
+    "an expired grant does not authorize",
+    robot_tools.check_and_consume_motion_grant(_S, "drive_straight", _ARGS) is not None,
+)
+check(
+    "an unknown session has no grant",
+    robot_tools.check_and_consume_motion_grant("nobody", "drive_straight", _ARGS) is not None,
+)
+
+# The approval prompt must describe exactly what will happen, and must refuse
+# to describe anything outside the bounds robot/safety.py enforces.
+_ok = robot_tools.authorized_motion_request(
+    {"motion": "drive_straight", "distance_cm": -20, "speed_pct": 10})
+check("authorization describes the motion in words",
+      _ok is not None and _ok[2] == "drive backward 20 cm at 10% speed")
+for _bad, _why in (
+    ({"motion": "drive_straight", "distance_cm": 51, "speed_pct": 10}, "over distance limit"),
+    ({"motion": "drive_straight", "distance_cm": 10, "speed_pct": 31}, "over speed limit"),
+    ({"motion": "drive_straight", "distance_cm": 10, "speed_pct": 0}, "zero speed"),
+    ({"motion": "turn", "angle_degrees": 181, "speed_pct": 10}, "over turn limit"),
+    ({"motion": "turn", "angle_degrees": True, "speed_pct": 10}, "bool is not an angle"),
+    ({"motion": "fly", "speed_pct": 10}, "unknown motion"),
+):
+    check(f"authorization refuses: {_why}", robot_tools.authorized_motion_request(_bad) is None)
+
+# The bounds the prompt promises are the bounds the hardware layer enforces.
+from robot.safety import MotionLimits  # noqa: E402
+_lim = MotionLimits()
+check("prompt bounds match MotionLimits distance", _lim.max_distance_cm == 50)
+check("prompt bounds match MotionLimits speed", _lim.max_speed_pct == 30)
+check("prompt bounds match MotionLimits turn", _lim.max_turn_degrees == 180)
+
+# --- stop intercept (transferred from hal) ---------------------------------------
+
+for _said in ("Stop!", "stop", "HAL, stop", "stop the robot", "halt", "emergency stop"):
+    check(f"stop fires on {_said!r}", stopwords.is_stop_command(_said))
+# A stop must not fire on discussion of stopping — but the budget is deliberately
+# the opposite of farewell's: a false positive only stops a robot that did not
+# need stopping, so this leans toward firing.
+for _said in ("what does stop mean", "don't stop", "stop talking about that"):
+    check(f"stop ignores {_said!r}", not stopwords.is_stop_command(_said))
+
 # --- farewell (transferred from hal) ---------------------------------------------
 
 import farewell  # noqa: E402

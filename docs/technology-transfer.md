@@ -102,6 +102,28 @@ Hermes Agent on Android. Recorded here because it completes the deployment
 story the earlier increments started: `bin/termux-setup-agent` and the agent
 section of `pixel-deployment.md`.
 
+## Fifth increment: robot tools
+
+Copied from hal at `1318bd1e486ac08086e543b74c90ad1d3360a654`.
+
+| Source (hal) | Destination | Adaptation |
+| --- | --- | --- |
+| `robot/` (12 modules) | `robot/` | Verbatim. The hardware layer imports nothing from `brain/` or `main` — stdlib plus pyserial — so it transferred unchanged. |
+| `brain/stopwords.py` | `stopwords.py` | Flattened out of the `brain` package. Unchanged otherwise. |
+| `brain/robot_tools.py` + the motion-grant half of `brain/events.py` | `robot_tools.py` | Rewritten against `hermes_bridge`'s permission primitives instead of hal's `EventHub`, with its own grant store. Gating semantics preserved exactly. |
+| `robot/mcp_server.py` | `robot/mcp_server.py` | Retargeted from Codex CLI to Hermes Agent and from hal's `/internal/codex/*` to this app's `/internal/robot/*`. |
+| `main.py` `_stop_reply` | `main.py` `_stop_reply` | Copied, using `stopwords.is_stop_command` and this app's proposal/permission helpers. |
+
+**The integration differs from hal's by necessity.** hal's brains run their own
+tool loop in-process and call `robot_tools` directly. Hermes Agent owns its own
+tool loop behind ACP, so the chassis is reached the way hal reaches it from
+Codex: an MCP server proxies to `/internal/robot/*`, and those routes call
+`robot_tools.py`. One implementation of the safety logic, not a copy in the MCP
+process.
+
+**Motion is off unless `HAL_ROBOT_MOTION=1`.** Sensors and stop are always
+available. Nothing here has touched hardware — see below.
+
 ## Transfer ledger
 
 
@@ -110,10 +132,14 @@ commit `1318bd1e486ac08086e543b74c90ad1d3360a654`.
 
 Second increment: the ASR/TTS table above.
 
-Third increment: the Termux build recipe above. Remaining candidates:
+Third increment: the Termux build recipe above.
 
-- Android USB transport and the associated hardware tests.
-- Robot command boundaries and safeguards, adopted together with their tests.
+Fourth increment: the agent on the phone (not a transfer).
+
+Fifth increment: robot tools, adopted together with their safeguards and tests
+as this ledger required. Remaining candidates: hal's camera-first crawl
+autonomy (`robot/crawl.py` is present but not wired to a tool), and its
+telemetry benchmarks.
 
 Each future copy must list source path, source commit, destination, adaptations,
 and verification. Keep Hermes Agent sessions, credentials, working directory and

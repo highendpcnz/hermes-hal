@@ -176,18 +176,60 @@ looked for `~/hermes-agent/.venv/bin`, but upstream's Termux path creates
 `venv` without the dot, so `hermes-acp` was present and invisible. Both names
 are searched now.
 
+## Robot tools
+
+`robot/` and `robot_tools.py` are in place, reached by Hermes Agent through an
+MCP server. Register it on the phone once the bridge is running:
+
+```bash
+hermes mcp add hal-robot -- python3 -m robot.mcp_server
+```
+
+**Motion is disabled unless `HAL_ROBOT_MOTION=1`, and should stay that way
+until a person is watching the robot.** Sensors and emergency stop are always
+available.
+
+Authorization is two-step: the model must call `request_motion_authorization`
+with the exact motion, which prompts you, and approval mints a **one-use grant
+bound to those exact arguments**. Approving "drive 20 cm" does not authorize
+"drive 50 cm", and a grant cannot be spent twice. Verified against the
+simulator; the tests cover the near-miss cases specifically.
+
+Two limits are inherited from hal's measured reality and are properties of the
+design, not bugs:
+
+- **A stop cannot interrupt a drive in progress.** `run_motion` holds the
+  serial transport for the command's duration and a second connection to the
+  device fails with "Resource busy". A stop arriving mid-drive says so rather
+  than claiming a stop that did not happen.
+- **The voice loop is not listening during motion.** `termux_voice.py` is
+  sequential — running the turn, not recording. A stop shouted mid-drive is
+  never captured.
+
+What keeps this safe is that motions are bounded and self-terminate on the
+firmware side: 50 cm / 30% normally, 5 cm / 10% under crawl. Do not raise those
+limits to compensate. If the margin stops being acceptable, the fix is a
+recorder running concurrently with the turn feeding a stop matcher, or a
+hardware stop button.
+
 ## What still has to be proven on the device
 
-1. **Credentials.** `~/.hermes` exists on the phone but holds no `auth.json`,
+1. **None of the robot code has touched hardware.** `termux-usb -l` returns
+   `[]` — the CyberPi is disconnected, so every robot claim above rests on the
+   simulator and on hal's measurements, not on this repo driving a chassis.
+   Reconnect it, keep `HAL_ROBOT_MOTION=0`, and confirm `read_spatial_sensors`
+   returns real distances before enabling motion. Then enable motion with a
+   hand on the robot.
+2. **Credentials.** `~/.hermes` exists on the phone but holds no `auth.json`,
    so the agent cannot answer anything yet. Run `hermes setup` on the device.
    Copying `auth.json` from another machine means sharing that credential with
    the phone — a decision for whoever owns it, not a deployment step. Verify
    Luna subscription access with an authenticated inference test before
    claiming that backend works here.
-2. A full `HAL_TERMUX_LISTEN=1` conversation — wake phrase, turn, spoken
+3. A full `HAL_TERMUX_LISTEN=1` conversation — wake phrase, turn, spoken
    sign-off — which needs (1).
-3. Audible playback through `termux-media-player`. hal confirmed this on this
+4. Audible playback through `termux-media-player`. hal confirmed this on this
    handset; this repo's own path has not been listened to.
-4. Battery: Android killed hal's Termux twice before a battery exemption was
+5. Battery: Android killed hal's Termux twice before a battery exemption was
    set, and that exemption was never verifiable from inside Termux
    (`dumpsys` is blocked). It only proves itself by surviving a long idle.

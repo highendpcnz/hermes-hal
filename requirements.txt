@@ -15,6 +15,11 @@ faster-whisper>=1.0
 # The default ACP bridge (HAL_BRIDGE=acp) also needs the official ACP
 # library — in the Hermes venv it comes from the hermes-agent[acp] extra:
 agent-client-protocol==0.9.0
+# Robot tools (robot/, robot_tools.py). pyserial talks to the CyberPi over a
+# desktop serial port; on Termux the Android USB fd path is used instead and
+# pyserial is not required. mcp is only needed to RUN robot/mcp_server.py,
+# which Hermes Agent spawns — it already ships mcp via hermes-agent[mcp].
+pyserial>=3.5
 # The reflection loop experiment (reflection/reflection_loop.py) needs:
 # openai>=1.40
 # The Crew Manifest (speaker_id.py voiceprints) needs — see README:

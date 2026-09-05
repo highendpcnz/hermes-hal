@@ -49,7 +49,9 @@ import hermes_bridge
 from hermes_bridge import ask_hermes
 import ledger
 import mission_control
+import robot_tools
 import speaker_id
+import stopwords
 
 APP_DIR = Path(__file__).resolve().parent
 # The voice model ships in this repository. Preferring it over the Hermes venv's
@@ -1323,6 +1325,38 @@ def _cancel_target(session_id: str, title: str) -> "mission_control.Mission | No
     return manager.latest_active(session_id)
 
 
+async def _stop_reply(session_id: str, user_text: str) -> str | None:
+    """Own the stop path, ahead of every other rule in run_turn_text.
+
+    "stop" also matches _PERM_DENY_RE, so with a tool-permission request or a
+    mission proposal pending, a bare "Stop!" would be consumed as that
+    prompt's "no" — answering "Understood, Dave. I won't", which is true of
+    the prompt and false of a chassis that is still moving.
+
+    Precedence is stated here, once, rather than emerging from the order of
+    the regexes below. A pending prompt is answered as denied on the way past
+    — that is what the word means — and then the robot is stopped.
+
+    This never reaches the model: see stopwords.py for why a sampled model is
+    not an acceptable guarantee for the one command whose purpose is to stop a
+    moving machine. Returns None when there is no chassis to stop, leaving the
+    utterance to the ordinary grammar.
+    """
+    if not stopwords.is_stop_command(user_text):
+        return None
+    pending = hermes_bridge.pending_permission_for(session_id)
+    if pending is not None:
+        hermes_bridge.resolve_permission(pending, False, session_id)
+    if _pending_proposal(session_id) is not None:
+        _resolve_proposal(session_id, False)
+    result = await asyncio.to_thread(robot_tools.emergency_stop)
+    if result.get("ok"):
+        return "Stopping, Dave."
+    # Never claim a stop that did not happen. The most likely cause is that a
+    # drive is holding the transport — see robot_tools.py.
+    return f"I could not reach the chassis to stop it, Dave: {result.get('error', 'unknown')}"
+
+
 async def run_turn_text(
     session_id: str, user_text: str, speaker: str | None = None
 ) -> tuple[str, dict[str, int]]:
@@ -1332,7 +1366,9 @@ async def run_turn_text(
     unrecognized voice, otherwise the enrolled name."""
     timings: dict[str, int] = {}
 
-    if (hal_text := _permission_reply(session_id, user_text, speaker)) is not None:
+    if (stop_line := await _stop_reply(session_id, user_text)) is not None:
+        hal_text = stop_line  # deterministic stop; never reaches the model
+    elif (hal_text := _permission_reply(session_id, user_text, speaker)) is not None:
         pass  # a pending tool permission was just answered by voice/text
     elif (hal_text := _proposal_reply(session_id, user_text, speaker)) is not None:
         pass  # a pending mission proposal was just answered
@@ -2060,6 +2096,85 @@ async def permission_decision(request_id: str, body: PermissionDecision, request
     allow = body.decision.strip().lower() == "allow"
     ok = hermes_bridge.resolve_permission(request_id, allow, session_id)
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+# ---------------------------------------------------------------------------
+# Robot tools, reached by Hermes Agent through robot/mcp_server.py
+# ---------------------------------------------------------------------------
+#
+# The MCP server runs as a separate process spawned by Hermes, so it has no
+# access to this app's in-memory motion grants or the CyberPi transport. It
+# proxies here instead, and these routes call robot_tools.py — the same code
+# any other caller would use. One implementation of the safety logic.
+#
+# Loopback-only, like everything else in this app: the sole security boundary
+# is the bind address plus the Host check (see ALLOWED_HOSTS). `session_token`
+# is the browser session the MCP process was told to act for; motion grants
+# are keyed by it so an approval in one conversation cannot move the robot on
+# behalf of another.
+
+
+class RobotToolCall(BaseModel):
+    session_token: str
+    arguments: dict = {}
+
+
+@app.post("/internal/robot/sensors")
+def robot_sensors(_body: RobotToolCall):
+    """Read-only. Never gated by HAL_ROBOT_MOTION."""
+    return JSONResponse(robot_tools.read_spatial_sensors())
+
+
+@app.post("/internal/robot/authorize")
+async def robot_authorize(body: RobotToolCall):
+    """Ask the person at the interface to approve one exact motion."""
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    return JSONResponse(
+        await robot_tools.request_motion_authorization(session_id, body.arguments)
+    )
+
+
+@app.post("/internal/robot/move")
+def robot_move(body: RobotToolCall):
+    """Spend a one-use grant and move. Refuses without an exact-argument match."""
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    name = str(body.arguments.get("motion") or "")
+    if name == "drive_straight":
+        payload = {
+            "distance_cm": body.arguments.get("distance_cm"),
+            "speed_pct": body.arguments.get("speed_pct"),
+        }
+    elif name == "turn":
+        payload = {
+            "angle_degrees": body.arguments.get("angle_degrees"),
+            "speed_pct": body.arguments.get("speed_pct"),
+        }
+    else:
+        return JSONResponse({"ok": False, "error": "unknown motion"}, status_code=400)
+
+    refusal = robot_tools.check_and_consume_motion_grant(session_id, name, payload)
+    if refusal is not None:
+        return JSONResponse(refusal)
+    if name == "drive_straight":
+        result = robot_tools.drive_straight(
+            None, payload["distance_cm"], payload["speed_pct"]
+        )
+    else:
+        result = robot_tools.turn(None, payload["angle_degrees"], payload["speed_pct"])
+    return JSONResponse(result)
+
+
+@app.post("/internal/robot/stop")
+def robot_stop(_body: RobotToolCall):
+    """Always available, even when motion is disabled. See robot_tools.py for
+    why a stop issued while a drive holds the transport cannot reach the
+    chassis — it reports that rather than claiming a stop that did not
+    happen."""
+    return JSONResponse(robot_tools.emergency_stop())
 
 
 class ProposalDecision(BaseModel):
