@@ -358,6 +358,61 @@ def describe_frame(image_bytes: bytes, *, mime_type: str = "image/jpeg") -> dict
         return {"ok": False, "error": "vision model returned no description"}
 
 
+def set_board_mode(mode: str, open_transport: Callable[[], object] | None = None) -> dict:
+    """Switch the CyberPi between online and upload mode.
+
+    The frames are hardware-confirmed: a cold-boot USB capture of a real mBlock
+    "Enter Live" session showed exactly ONLINE_MODE_MARKER going host-to-device,
+    and the round trip (online -> upload -> online) is repeatable. See
+    robot/cyberpi.py.
+
+    Not gated by HAL_ROBOT_MOTION: this turns no motors, and it is reversible.
+    Worth knowing before reaching for it — **upload mode does not block
+    motion.** robot/telemetry.py records that online-exec requests were
+    confirmed on real hardware to work regardless of reported mode, and that
+    the online-mode requirement was this client's own assumption rather than a
+    firmware precondition. So this is for matching mBlock's state, not for
+    unblocking anything.
+
+    The write is verified by reading the mode back, because the marker is a
+    request rather than an acknowledgement — an unverified "ok" here would be a
+    claim about hardware nobody checked.
+    """
+    from robot.cyberpi import UPLOAD_MODE_MARKER, encode_online_mode_frame
+    from robot.telemetry import CyberPiTelemetryClient
+
+    wanted = mode.strip().lower()
+    if wanted not in {"online", "upload"}:
+        return {"ok": False, "error": "mode must be 'online' or 'upload'"}
+
+    opener = open_transport or _default_opener()
+    try:
+        transport = opener()
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+    try:
+        client = CyberPiTelemetryClient(transport)
+        before = client.read_mode()
+        frame = encode_online_mode_frame() if wanted == "online" else UPLOAD_MODE_MARKER
+        transport.write(frame)
+        time.sleep(float(os.environ.get("HAL_MODE_SETTLE_SECONDS", "1.0")))
+        after = client.read_mode()
+        after_value = getattr(after, "value", str(after))
+        return {
+            "ok": after_value == wanted,
+            "requested": wanted,
+            "mode_before": getattr(before, "value", str(before)),
+            "mode_after": after_value,
+        }
+    except Exception as error:
+        return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    finally:
+        try:
+            transport.close()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Motion — gated
 # ---------------------------------------------------------------------------

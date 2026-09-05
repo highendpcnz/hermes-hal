@@ -2189,6 +2189,15 @@ def robot_move(body: RobotToolCall):
     return JSONResponse(result)
 
 
+@app.post("/internal/robot/mode")
+def robot_mode(body: RobotToolCall):
+    """Read or set the board's online/upload mode. Verified by read-back."""
+    wanted = str(body.arguments.get("mode") or "").strip().lower()
+    if not wanted:
+        return JSONResponse(robot_tools.read_spatial_sensors())
+    return JSONResponse(robot_tools.set_board_mode(wanted))
+
+
 @app.post("/internal/robot/look")
 def robot_look(_body: RobotToolCall):
     """One camera frame, base64-encoded so it survives this JSON hop.
