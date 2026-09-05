@@ -363,6 +363,93 @@ check("prompt bounds match MotionLimits distance", _lim.max_distance_cm == 50)
 check("prompt bounds match MotionLimits speed", _lim.max_speed_pct == 30)
 check("prompt bounds match MotionLimits turn", _lim.max_turn_degrees == 180)
 
+# --- crawl autonomy gates ------------------------------------------------------
+
+from robot.crawl import CrawlController, CrawlLimits, CrawlSafetyError  # noqa: E402
+
+_lim = CrawlLimits()
+check("crawl segment cap is 5cm", _lim.max_segment_cm == 5)
+check("crawl speed cap is 10%", _lim.max_speed_pct == 10)
+check("crawl total budget is 25cm", _lim.max_total_distance_cm == 25)
+check("crawl demands more clearance than the base interlock",
+      _lim.min_obstacle_cm > MotionLimits().min_obstacle_cm)
+
+
+def _crawl_refuses(fn):
+    """True when fn() is rejected by a crawl safety gate."""
+    try:
+        fn()
+    except CrawlSafetyError:
+        return True
+    return False
+
+
+# The limits object refuses to be constructed weaker than the base interlock.
+try:
+    CrawlLimits(min_obstacle_cm=1.0)
+    _weakened = True
+except CrawlSafetyError:
+    _weakened = False
+check("crawl limits cannot be built weaker than the base interlock", not _weakened)
+
+_c = CrawlController(CrawlLimits())
+check("crawl refuses to drive before it is armed",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
+_c.arm()
+check("crawl refuses to drive with no capture",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
+_c.record_capture("frame-1")
+check("crawl refuses an assessment of a different frame",
+      _crawl_refuses(lambda: _c.record_assessment("frame-2", "clear", 1.0)))
+_c.record_assessment("frame-1", "blocked", 1.0)
+check("crawl refuses to drive on a blocked assessment",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
+_c.record_assessment("frame-1", "clear", 0.5)
+check("crawl refuses a low-confidence clear",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
+_c.record_assessment("frame-1", "clear", 0.95)
+check("crawl refuses an over-long segment",
+      _crawl_refuses(lambda: _c.prepare_drive(6, 10)))
+check("crawl refuses an over-fast segment",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 11)))
+_c.prepare_drive(5, 10)
+check("crawl accepts a clear, in-bounds segment", True)
+_c.consume_drive(5)
+check("crawl spends the assessment after a step",
+      _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
+check("crawl decrements the budget", _c.state.remaining_cm == 20)
+
+# A stale frame must not authorise a step, however good the assessment.
+_clock = [1000.0]
+_c2 = CrawlController(CrawlLimits(), clock=lambda: _clock[0])
+_c2.arm()
+_c2.record_capture("f")
+_c2.record_assessment("f", "clear", 1.0)
+_clock[0] += CrawlLimits().max_frame_age_seconds + 1
+check("crawl refuses a stale camera frame",
+      _crawl_refuses(lambda: _c2.prepare_drive(5, 10)))
+
+# The episode expires on its own.
+_clock2 = [1000.0]
+_c3 = CrawlController(CrawlLimits(), clock=lambda: _clock2[0])
+_c3.arm()
+_clock2[0] += CrawlLimits().max_duration_seconds + 1
+check("crawl disarms itself when the episode expires", not _c3.is_active())
+
+# Both default off, and crawl_arm refuses unless BOTH are on — sight is what
+# separates crawling from repeated blind driving.
+check("crawl is unreachable with motion off",
+      not robot_tools.MOTION_ENABLED and not robot_tools.CAMERA_ENABLED)
+
+# A refused crawl step must report ok:false. It did not: crawl_status carried
+# its own "ok": True and dict union let it overwrite the refusal, so a rejected
+# step came back as a success. Found on the device, 2026-09-06.
+_refused = robot_tools.crawl_step("no-such-session", "x", "clear", 1.0, 5, 10)
+check("a refused crawl step reports failure", _refused.get("ok") is False)
+check("a refused crawl step still says why", bool(_refused.get("error")))
+check("crawl state fields never carry an ok",
+      "ok" not in robot_tools._crawl_state("no-such-session"))
+
 # --- stop intercept (transferred from hal) ---------------------------------------
 
 for _said in ("Stop!", "stop", "HAL, stop", "stop the robot", "halt", "emergency stop"):

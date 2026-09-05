@@ -523,6 +523,160 @@ def emergency_stop(open_transport: Callable[[], object] | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Camera-first crawl autonomy — gated hardest of all
+# ---------------------------------------------------------------------------
+#
+# The robot moves itself here, so the question is not "did a person approve
+# this motion" but "did a person approve this *episode*". Arming therefore
+# takes the same human approval a single motion does, and buys a bounded
+# budget rather than one step: 25 cm total, 5 cm per segment, 10% speed, 60
+# seconds, and every segment needs its own fresh camera assessment. The
+# controller spends the budget even when the hardware command fails, because
+# retrying after an uncertain physical outcome is worse than stopping.
+#
+# **The assessment is weaker here than in hal.** hal's Gemma looked at the
+# frame. Ollama Cloud rejects images in tool results (see describe_frame), so
+# the model assessing "clear" is reading a *description* of the picture. A
+# caption that omits the table edge cannot be assessed for the table edge.
+# min_vision_confidence stays at 0.9, but understand what the 0.9 is about.
+#
+# Crawl requires HAL_ROBOT_MOTION=1 *and* HAL_ROBOT_CAMERA=1: without sight it
+# is just repeated blind driving, which is the thing the design exists to
+# prevent.
+
+_crawl_controllers: dict[str, object] = {}
+
+
+def _crawl_for(session_id: str):
+    from robot.crawl import CrawlController, CrawlLimits
+
+    if session_id not in _crawl_controllers:
+        _crawl_controllers[session_id] = CrawlController(CrawlLimits())
+    return _crawl_controllers[session_id]
+
+
+def _crawl_state(session_id: str) -> dict:
+    """Status fields only — deliberately no "ok".
+
+    These get merged into tool results, and dict union lets the right side
+    win: an "ok": True in here silently overwrote a refusal's "ok": False and
+    reported a rejected crawl step as a success. Status is not an outcome.
+    """
+    controller = _crawl_for(session_id)
+    state = controller.state
+    return {
+        "armed": controller.is_active(),
+        "remaining_cm": state.remaining_cm,
+        "assessment": state.assessment,
+        "assessment_confidence": state.assessment_confidence,
+        "has_capture": state.capture_id is not None,
+    }
+
+
+def crawl_status(session_id: str) -> dict:
+    """The status report as a standalone tool result."""
+    return {"ok": True} | _crawl_state(session_id)
+
+
+async def crawl_arm(session_id: str) -> dict:
+    """Arm one crawl episode, after a human approves the whole episode."""
+    if not MOTION_ENABLED:
+        return {"ok": False, "error": "motion is disabled (set HAL_ROBOT_MOTION=1)"}
+    if not CAMERA_ENABLED:
+        return {"ok": False, "error": "crawl needs the camera (set HAL_ROBOT_CAMERA=1)"}
+
+    from robot.crawl import CrawlLimits
+
+    limits = CrawlLimits()
+    title = (
+        f"autonomous crawl: up to {limits.max_total_distance_cm} cm forward in "
+        f"{limits.max_segment_cm} cm steps at {limits.max_speed_pct}% speed, "
+        f"{int(limits.max_duration_seconds)}s, camera-checked each step"
+    )
+    request_id, future = hermes_bridge._register_permission(session_id, title)
+    hermes_bridge.publish_event(session_id, {
+        "type": "permission_request",
+        "request_id": request_id,
+        "title": title,
+        "timeout": MOTION_PERMISSION_TIMEOUT,
+    })
+    try:
+        allowed = await asyncio.wait_for(future, timeout=MOTION_PERMISSION_TIMEOUT)
+    except asyncio.TimeoutError:
+        allowed = False
+    finally:
+        hermes_bridge._pending_permissions.pop(request_id, None)
+    hermes_bridge.publish_event(session_id, {
+        "type": "permission_resolved",
+        "request_id": request_id,
+        "title": title,
+        "allowed": allowed,
+    })
+    if not allowed:
+        return {"ok": False, "error": "crawl authorization was denied or timed out"}
+
+    _crawl_for(session_id).arm()
+    return {"ok": True, "authorized": title} | _crawl_state(session_id)
+
+
+def crawl_disarm(session_id: str) -> dict:
+    _crawl_for(session_id).disarm()
+    return {"ok": True} | _crawl_state(session_id)
+
+
+def crawl_observe(session_id: str, *, data_dir=None) -> dict:
+    """Capture a frame for the crawl and describe it. Records the capture so a
+    following assessment can be tied to this exact frame."""
+    from robot.crawl import CrawlSafetyError
+
+    controller = _crawl_for(session_id)
+    if not controller.is_active():
+        return {"ok": False, "error": "crawl autonomy is not armed or has expired"}
+    result, image_bytes = capture_visual_scene(data_dir=data_dir)
+    if image_bytes is None:
+        return result
+    described = describe_frame(image_bytes)
+    if not described.get("ok"):
+        return {"ok": False, "error": f"cannot assess without a description: {described.get('error')}"}
+    try:
+        controller.record_capture(result["path"])
+    except CrawlSafetyError as error:
+        return {"ok": False, "error": str(error)}
+    # The ultrasonic reading is reported alongside the description because the
+    # base proximity interlock will check it again at transmission time, and a
+    # model that has seen it will not propose a segment that is about to be
+    # refused.
+    sensors = read_spatial_sensors()
+    return {
+        "ok": True,
+        "capture_id": result["path"],
+        "description": described["description"],
+        "ultrasonic_cm": sensors.get("ultrasonic_cm"),
+        "remaining_cm": controller.state.remaining_cm,
+    }
+
+
+def crawl_step(session_id: str, capture_id: str, assessment: str, confidence: float,
+               distance_cm: int, speed_pct: int) -> dict:
+    """Record an assessment for the latest frame and, if it clears, drive one
+    short segment. The budget is spent whether or not the hardware succeeds."""
+    from robot.crawl import CrawlSafetyError
+
+    controller = _crawl_for(session_id)
+    try:
+        controller.record_assessment(capture_id, assessment, confidence)
+        controller.prepare_drive(distance_cm, speed_pct)
+    except CrawlSafetyError as error:
+        return {"ok": False, "error": str(error)} | _crawl_state(session_id)
+
+    still_active = controller.consume_drive(distance_cm)
+    # The drive result owns "ok" — it is the only part of this that touched
+    # hardware. Status fields are merged in from _crawl_state, which has none.
+    result = drive_straight(None, distance_cm, speed_pct)
+    return result | {"crawl_active": still_active} | _crawl_state(session_id)
+
+
+# ---------------------------------------------------------------------------
 # One-use, exact-argument motion grants
 # ---------------------------------------------------------------------------
 

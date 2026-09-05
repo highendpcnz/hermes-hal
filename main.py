@@ -2189,6 +2189,56 @@ def robot_move(body: RobotToolCall):
     return JSONResponse(result)
 
 
+@app.post("/internal/robot/crawl/arm")
+async def robot_crawl_arm(body: RobotToolCall):
+    """Arm one crawl episode. Prompts a human to approve the whole episode."""
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    return JSONResponse(await robot_tools.crawl_arm(session_id))
+
+
+@app.post("/internal/robot/crawl/status")
+def robot_crawl_status(body: RobotToolCall):
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    return JSONResponse(robot_tools.crawl_status(session_id))
+
+
+@app.post("/internal/robot/crawl/disarm")
+def robot_crawl_disarm(body: RobotToolCall):
+    """Always available — stopping an episode must never be gated."""
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    return JSONResponse(robot_tools.crawl_disarm(session_id))
+
+
+@app.post("/internal/robot/crawl/observe")
+def robot_crawl_observe(body: RobotToolCall):
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    return JSONResponse(robot_tools.crawl_observe(session_id, data_dir=DATA_DIR))
+
+
+@app.post("/internal/robot/crawl/step")
+def robot_crawl_step(body: RobotToolCall):
+    session_id = _valid_session_id(body.session_token)
+    if session_id is None:
+        return JSONResponse({"ok": False, "error": "unknown session"}, status_code=403)
+    a = body.arguments
+    return JSONResponse(robot_tools.crawl_step(
+        session_id,
+        str(a.get("capture_id") or ""),
+        str(a.get("assessment") or "unknown"),
+        a.get("confidence", 0.0),
+        a.get("distance_cm", 0),
+        a.get("speed_pct", 0),
+    ))
+
+
 @app.post("/internal/robot/mode")
 def robot_mode(body: RobotToolCall):
     """Read or set the board's online/upload mode. Verified by read-back."""

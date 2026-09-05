@@ -131,6 +131,57 @@ def look(session_token: str):
 
 
 @server.tool()
+def crawl_arm(session_token: str) -> dict:
+    """Ask the operator to authorise ONE autonomous crawl episode. This does not
+    move the robot. On approval you may repeat crawl_observe then crawl_step
+    until the budget runs out: 25 cm total, 5 cm per step, 10% speed, 60
+    seconds. Every step needs its own fresh camera assessment."""
+    return _post("/internal/robot/crawl/arm", {"session_token": session_token})
+
+
+@server.tool()
+def crawl_status(session_token: str) -> dict:
+    """Whether a crawl episode is armed, and how much budget is left."""
+    return _post("/internal/robot/crawl/status", {"session_token": session_token})
+
+
+@server.tool()
+def crawl_disarm(session_token: str) -> dict:
+    """End the crawl episode immediately. Always available."""
+    return _post("/internal/robot/crawl/disarm", {"session_token": session_token})
+
+
+@server.tool()
+def crawl_observe(session_token: str) -> dict:
+    """Take a fresh photograph for the crawl and get it described, plus the
+    current ultrasonic distance. Returns a capture_id you must pass to
+    crawl_step — an assessment of an older frame will be refused. Judge from
+    the description whether the path ahead is genuinely clear; say "blocked"
+    or use a low confidence if the description is vague, because a description
+    that does not mention a hazard is not evidence there is none."""
+    return _post("/internal/robot/crawl/observe", {"session_token": session_token})
+
+
+@server.tool()
+def crawl_step(
+    session_token: str, capture_id: str, assessment: str, confidence: float,
+    distance_cm: int, speed_pct: int,
+) -> dict:
+    """Record your assessment of the latest capture and, if it is "clear" with
+    confidence of at least 0.9, drive one short segment forward. assessment is
+    "clear", "blocked" or "unknown"; distance_cm is 1..5; speed_pct is 1..10.
+    The budget is spent whether or not the motion succeeds, so do not retry a
+    segment whose outcome you are unsure of."""
+    return _post("/internal/robot/crawl/step", {
+        "session_token": session_token,
+        "arguments": {
+            "capture_id": capture_id, "assessment": assessment,
+            "confidence": confidence, "distance_cm": distance_cm, "speed_pct": speed_pct,
+        },
+    })
+
+
+@server.tool()
 def emergency_stop(session_token: str) -> dict:
     """Stop all motors. Always permitted, even when motion is disabled. Note
     that a stop issued while a drive is already running cannot reach the
