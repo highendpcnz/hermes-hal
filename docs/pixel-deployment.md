@@ -189,6 +189,35 @@ hermes mcp add hal-robot -- python3 -m robot.mcp_server
 until a person is watching the robot.** Sensors and emergency stop are always
 available.
 
+### Sensors verified on the chassis, 2026-09-06
+
+First time this repo has touched the hardware. Motion stayed off throughout.
+
+```
+TERMUX_USB_FD : 7
+read 1:   46.8 cm  yaw  65.0  pitch  8.0   (0.61s)
+read 2:   46.8 cm  yaw  65.0  pitch  8.0   (0.63s)
+read 3:   47.3 cm  yaw  65.0  pitch  8.0   (0.58s)
+read 4:   47.3 cm  yaw  65.0  pitch  8.0   (0.58s)
+```
+
+Live, not cached: the ultrasonic drifts with sensor noise while yaw and pitch
+hold constant on a stationary board. ~0.6 s per read, consistent with hal's
+827 ms measurement — the transport is opened and closed per call, so that cost
+is paid every time.
+
+The board reports `mode=upload (not online, proceeding anyway)`. Telemetry
+works in that mode; entering genuine online mode is what motor control needs.
+
+Run it under a USB claim — the Android path needs the fd:
+
+```bash
+termux-usb -E -r -e "bash <script>" /dev/bus/usb/001/002
+```
+
+Without that claim `TERMUX_USB_FD` is unset and `read_spatial_sensors` refuses
+with a message saying so.
+
 Authorization is two-step: the model must call `request_motion_authorization`
 with the exact motion, which prompts you, and approval mints a **one-use grant
 bound to those exact arguments**. Approving "drive 20 cm" does not authorize
@@ -214,12 +243,10 @@ hardware stop button.
 
 ## What still has to be proven on the device
 
-1. **None of the robot code has touched hardware.** `termux-usb -l` returns
-   `[]` — the CyberPi is disconnected, so every robot claim above rests on the
-   simulator and on hal's measurements, not on this repo driving a chassis.
-   Reconnect it, keep `HAL_ROBOT_MOTION=0`, and confirm `read_spatial_sensors`
-   returns real distances before enabling motion. Then enable motion with a
-   hand on the robot.
+1. **No motion has been commanded from this repo.** Sensors are verified
+   against the real chassis (above); the motor path is not. Enable
+   `HAL_ROBOT_MOTION=1` only with a hand on the robot, and remember that a
+   stop cannot interrupt a drive once it starts.
 2. **Credentials.** `~/.hermes` exists on the phone but holds no `auth.json`,
    so the agent cannot answer anything yet. Run `hermes setup` on the device.
    Copying `auth.json` from another machine means sharing that credential with
