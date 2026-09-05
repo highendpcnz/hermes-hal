@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111417">
+  <link rel="icon" href="data:,">
+  <title>Hermes Hal · Voice</title>
+  <link rel="stylesheet" href="/static/lite.css">
+  <script src="/static/lite.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><h1>Hermes Hal</h1><p>Voice &amp; conversation</p></header>
+    <p id="connection" role="status">Connecting…</p>
+    <section aria-label="Conversation"><div id="transcript" role="log" aria-live="polite"></div></section>
+    <p id="activity" role="status">Ready when you are.</p>
+    <section id="permission" aria-label="Tool permission" hidden>
+      <p id="permission-title"></p>
+      <button id="allow" type="button">Allow</button>
+      <button id="deny" type="button">Deny</button>
+    </section>
+    <form id="composer">
+      <label for="message">Message</label>
+      <div class="entry"><input id="message" autocomplete="off" maxlength="8000" required><button id="send">Send</button></div>
+    </form>
+    <div class="controls"><button id="microphone" type="button">Record message</button><button id="stop" type="button">Stop playback</button></div>
+    <audio id="reply" controls aria-label="Reply audio"></audio>
+    <footer>Stop playback silences the reply. Agent work continues. <a href="/bridge">Graphical interface</a></footer>
+  </main>
+</body>
+</html>

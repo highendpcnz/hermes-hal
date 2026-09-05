@@ -1,8 +1,8 @@
-# HAL Bridge design system
+# Hermes Hal Bridge design system
 
 ## Product context
 
-HAL Bridge is a local voice-and-text operator console backed by Hermes ACP. Dave uses it as a shipboard interface: speak through the optical panel, type precise instructions, inspect missions and systems, and approve gated actions. The present task adds discoverable, executable Hermes slash commands to the existing text composer.
+Hermes Hal Bridge is a local voice-and-text operator console backed by Hermes ACP. Dave uses it as a shipboard interface: speak through the optical panel, type precise instructions, inspect missions and systems, and approve gated actions. The present task adds discoverable, executable Hermes slash commands to the existing text composer.
 
 ## Intent
 

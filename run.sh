@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch the HAL 9000 web frontend for Hermes Agent.
+# Launch the Hermes Hal web frontend for Hermes Agent.
 # Runs inside the Hermes venv — no separate environment needed.
 # Plain bash so it works on Linux as well as macOS (zsh runs it fine too).
 set -euo pipefail
@@ -7,6 +7,7 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${HAL_PORT:-8000}"
 HOST="${HAL_HOST:-127.0.0.1}"
+export HAL_UI="${HAL_UI:-lite}"
 
 # The venv that RUNS HAL needs fastapi/uvicorn/piper/faster-whisper. That is
 # normally the Hermes venv, but a repo-local .venv takes precedence when one

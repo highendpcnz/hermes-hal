@@ -1,5 +1,5 @@
 {
-  "name": "hal-bridge-3d",
+  "name": "hermes-hal",
   "version": "0.1.0",
   "private": true,
   "type": "module",

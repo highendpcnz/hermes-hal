@@ -1,6 +1,6 @@
 # Page dependency trees
 
-## `/` — HAL Bridge
+## `/` — Hermes Hal Bridge
 
 Entry: `static/index.html`
 

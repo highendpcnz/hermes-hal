@@ -6,9 +6,9 @@
 <meta name="theme-color" content="#000000" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="HAL" />
+<meta name="apple-mobile-web-app-title" content="Hermes Hal" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23180404'/%3E%3Ccircle cx='32' cy='32' r='17' fill='%23ff2a1a'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%23fff2ee'/%3E%3C/svg%3E" />
-<title>HAL</title>
+<title>Hermes Hal</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
@@ -1164,9 +1164,9 @@
   <div class="bridge-left">
     <header class="bridge-brand" aria-label="Selected bridge direction">
       <span class="bridge-brand-title">Aperture Sentinel</span>
-      <span class="bridge-mark">HAL / 9000</span>
+      <span class="bridge-mark">Hermes Hal</span>
     </header>
-    <div class="eye-module" role="group" aria-label="HAL optical panel">
+    <div class="eye-module" role="group" aria-label="Hermes Hal optical panel">
       <div id="optic-stage" class="optic-stage" aria-hidden="true"></div>
       <span class="panel-slot panel-slot-top" aria-hidden="true"></span>
       <span class="panel-slot panel-slot-bottom" aria-hidden="true"></span>
@@ -1248,11 +1248,11 @@
   <form id="cmdline" class="cmdline">
     <div class="command-composer">
       <div id="cmd-command-menu" class="slash-command-menu" role="listbox"
-           aria-label="HAL and Hermes slash commands" hidden></div>
+           aria-label="Hermes Hal and Hermes slash commands" hidden></div>
       <input id="cmd-input" type="text" autocomplete="off" spellcheck="false"
              role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
              aria-expanded="false" aria-controls="cmd-command-menu"
-             placeholder='Type to HAL — "/" opens commands' />
+             placeholder='Type to Hermes Hal — "/" opens commands' />
     </div>
   </form>
 
@@ -1292,12 +1292,12 @@
   <div class="bridge-input">
     <div class="command-composer">
       <div id="bridge-command-menu" class="slash-command-menu" role="listbox"
-           aria-label="HAL and Hermes slash commands" hidden></div>
+           aria-label="Hermes Hal and Hermes slash commands" hidden></div>
       <form id="bridge-form">
         <input id="bridge-cmd" type="text" autocomplete="off" spellcheck="false"
                role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
                aria-expanded="false" aria-controls="bridge-command-menu"
-               placeholder='Type to HAL — "/" opens commands, Enter sends' />
+               placeholder='Type to Hermes Hal — "/" opens commands, Enter sends' />
         <button type="submit">Send</button>
       </form>
     </div>
@@ -1498,7 +1498,7 @@
       el.innerHTML = ts + body('<span class="mlog-role">You</span> ' + escapeHtml(text));
     } else if (type === 'hal') {
       el.className += ' mlog-hal';
-      el.innerHTML = ts + body('<span class="mlog-role">HAL</span> ' + escapeHtml(text));
+      el.innerHTML = ts + body('<span class="mlog-role">Hermes Hal</span> ' + escapeHtml(text));
     } else if (type === 'tool') {
       const status = extra || '';
       const icon = status === 'completed' ? '✓' : status === 'failed' ? '✗' : status === 'denied' ? '⊘' : '⚡';
@@ -1711,11 +1711,11 @@
     let status;
     if (chessGame.status !== 'active') {
       status = chessGame.outcome === 'draw' ? 'Draw.'
-        : chessGame.outcome === 'dave_wins' ? 'You won, Dave.' : 'HAL wins.';
+        : chessGame.outcome === 'dave_wins' ? 'You won, Dave.' : 'Hermes Hal wins.';
     } else if (chessGame.turn === chessGame.dave_color) {
       status = 'Your move, Dave.' + (chessGame.check ? ' Check.' : '');
     } else {
-      status = 'HAL is thinking…';
+      status = 'Hermes Hal is thinking…';
     }
     chessStatusEl.textContent = status;
   }
@@ -1726,7 +1726,7 @@
     if (chessSel && chessGame.legal.some(u => u.slice(0, 4) === chessSel + name)) {
       const uci = chessSel + name;  // promotions default to queen server-side
       chessSel = null;
-      chessStatusEl.textContent = 'HAL is thinking…';
+      chessStatusEl.textContent = 'Hermes Hal is thinking…';
       try {
         const res = await fetch('/api/chess/move', {
           method: 'POST',
@@ -1839,7 +1839,7 @@
     // Mobile log (original behavior)
     log.innerHTML =
       '<div class="you">You: ' + escapeHtml(userText || '—') + '</div>' +
-      '<div class="hal">HAL: ' + escapeHtml(halText || '—') + '</div>';
+      '<div class="hal">Hermes Hal: ' + escapeHtml(halText || '—') + '</div>';
     // Mission log (new)
     if (userText) appendToMissionLog('user', userText);
     if (halText) appendToMissionLog('hal', halText);
@@ -1933,7 +1933,7 @@
         loadViewscreen(true);  // the agent put something on the viewscreen
       } else if (msg.type === 'mission_proposal') {
         showPropbar(msg);
-        appendToMissionLog('system', 'HAL proposes: ' + (msg.title || 'a mission'));
+        appendToMissionLog('system', 'Hermes Hal proposes: ' + (msg.title || 'a mission'));
       } else if (msg.type === 'mission_proposal_resolved') {
         if (msg.request_id === propRequestId) hidePropbar();
         appendToMissionLog('system',
@@ -1962,7 +1962,7 @@
 
   function showPermbar(msg) {
     permRequestId = msg.request_id;
-    permbarText.textContent = 'HAL requests permission: ' + (msg.title || 'a tool');
+    permbarText.textContent = 'Hermes Hal requests permission: ' + (msg.title || 'a tool');
     permbar.classList.add('show');
     clearTimeout(permTimer);
     // Server denies on its own timeout; +2s slack covers clock skew.
@@ -2000,7 +2000,7 @@
 
   function showPropbar(msg) {
     propRequestId = msg.request_id;
-    propbarText.textContent = 'HAL proposes a mission: ' + (msg.title || 'untitled');
+    propbarText.textContent = 'Hermes Hal proposes a mission: ' + (msg.title || 'untitled');
     propbar.classList.add('show');
     clearTimeout(propTimer);
     propTimer = setTimeout(hidePropbar, ((msg.timeout || 600) + 2) * 1000);
@@ -3168,7 +3168,7 @@
     const header = document.createElement('div');
     header.className = 'slash-command-header';
     const title = document.createElement('span');
-    title.textContent = commandCatalogError ? 'Command channel · HAL only' : 'Command channel';
+    title.textContent = commandCatalogError ? 'Command channel · Hermes Hal only' : 'Command channel';
     const count = document.createElement('span');
     count.textContent = commandCatalogLoading && !commandCatalogLoaded
       ? 'Sync'
@@ -3254,7 +3254,7 @@
         commandCatalogError = payload.hermes_error || '';
         announceCommandStatus(
           commandCatalog.length + ' slash commands available'
-          + (commandCatalogError ? '. Hermes is unavailable; HAL commands remain.' : '.'),
+          + (commandCatalogError ? '. Hermes is unavailable; Hermes Hal commands remain.' : '.'),
         );
         return commandCatalog;
       } catch (error) {
@@ -3433,7 +3433,7 @@
       surface('surface-mcp', s.mcp);
       surface('surface-logs', s.logs);
       document.getElementById('drawer-history').textContent = hist.history && hist.history.length
-        ? hist.history.map(m => (m.role === 'user' ? 'You: ' : 'HAL: ') + m.content).join('\n\n')
+        ? hist.history.map(m => (m.role === 'user' ? 'You: ' : 'Hermes Hal: ') + m.content).join('\n\n')
         : '(no history yet)';
       drawerLoaded = true;
     } catch (e) {
@@ -3454,7 +3454,7 @@
   function closeDrawer() { drawer.classList.remove('open'); }
 
   async function resetSession() {
-    if (!confirm('Start a fresh session? HAL will not recall this conversation thread.')) return;
+    if (!confirm('Start a fresh session? Hermes Hal will not recall this conversation thread.')) return;
     try {
       await fetch('/api/session/reset', { method: 'POST', credentials: 'same-origin' });
     } catch (e) {

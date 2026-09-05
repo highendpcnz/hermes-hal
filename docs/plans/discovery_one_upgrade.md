@@ -6,13 +6,13 @@
 
 ## The Problem with HAL Right Now
 
-What you've built is **genuinely impressive** — a fully local, push-to-talk voice frontend that makes HAL 9000 the face of a tool-wielding AI agent. The CSS eye alone is art. But let's be honest about what it actually *is*:
+What you've built is **genuinely impressive** — a fully local, push-to-talk voice frontend that makes Hermes Hal the face of a tool-wielding AI agent. The CSS eye alone is art. But let's be honest about what it actually *is*:
 
 **A walkie-talkie.**
 
 You push a button. You talk. You wait. HAL talks back. You push the button again. The interaction model is fundamentally **request-response** — the same paradigm as every chatbot since ELIZA, just with a gorgeous red eye on top.
 
-The real HAL 9000 wasn't a walkie-talkie. HAL was a **crew member**. HAL watched. HAL listened. HAL *noticed things*. HAL spoke up when something mattered. HAL ran the ship while the crew slept.
+The original inspiration wasn't a walkie-talkie. Hermes Hal is a **crew member**. Hermes Hal watches. Hermes Hal listens. Hermes Hal *notices things*. Hermes Hal speaks up when something matters. Hermes Hal runs the ship while the crew sleeps.
 
 **That's the upgrade.**
 

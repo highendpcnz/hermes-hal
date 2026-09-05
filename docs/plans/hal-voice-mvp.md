@@ -1,7 +1,7 @@
-# HAL Voice MVP
+# Hermes Hal Voice MVP
 
 ## Goal
-Minimal FastAPI app with push-to-talk voice interaction in HAL 9000's voice, to validate voice feel before a larger Next.js build. English only, no persistence beyond process memory, no auth.
+Minimal FastAPI app with push-to-talk voice interaction in Hermes Hal's voice, to validate voice feel before a larger Next.js build. English only, no persistence beyond process memory, no auth.
 
 ## Stack
 - FastAPI + Uvicorn (Python 3.12 available)

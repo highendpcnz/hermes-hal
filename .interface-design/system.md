@@ -1,8 +1,8 @@
-# HAL Bridge interface system
+# Hermes Hal Bridge interface system
 
 ## Direction and feel
 
-HAL Bridge is a local Hermes ACP operator console for Dave. It should feel calm,
+Hermes Hal Bridge is a local Hermes ACP operator console for Dave. It should feel calm,
 exact, compact, and instrument-like. The optical panel remains the visual
 identity; text controls behave like subordinate bridge instrumentation, never
 like a generic chat interface or floating SaaS palette.

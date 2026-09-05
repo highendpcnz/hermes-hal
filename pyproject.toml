@@ -1,7 +1,7 @@
 [project]
-name = "hal-frontend"
+name = "hermes-hal"
 version = "0.1.0"
-description = "HAL 9000 voice frontend for Hermes Agent"
+description = "Hermes Hal voice frontend for Hermes Agent"
 requires-python = ">=3.12"
 
 [tool.ruff]

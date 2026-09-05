@@ -7,10 +7,10 @@ not.*
 
 ## Overview
 
-This repo is a **fully local voice interface that puts HAL 9000's face and
+This repo is a **fully local voice interface that puts Hermes Hal's face and
 voice on the Hermes Agent CLI**. A FastAPI server chains three stages —
 faster-whisper (STT) → Hermes Agent over the Agent Client Protocol (the
-"brain", with real tool access) → Piper TTS with a HAL-9000 voice model —
+"brain", with real tool access) → Piper TTS with a Hermes Hal voice model —
 behind a single-file web UI centered on a CSS-rendered HAL eye.
 
 It began in April 2026 as a cloud-backed MVP (Groq Whisper + Claude API,

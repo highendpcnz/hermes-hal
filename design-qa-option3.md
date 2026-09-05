@@ -14,7 +14,7 @@ Verified viewports and states (in-app browser):
   decay-1 red spill from the eye); the optic sits recessed in the beveled
   frame with chamfered corners, raking its beam toward the lower left; a
   glossy floor carries the glow pool. Chrome: top bar with brand
-  ("HAL / 9000 · SIGNAL VAULT"), live status, right-aligned nav +
+  ("Hermes Hal · SIGNAL VAULT"), live status, right-aligned nav +
   direction selector; compact fade-masked mission log top-left; the
   **hero transcript** — `#caption` restyled as huge uppercase mono type
   with a blinking red cursor and dotted rule — renders spoken lines left

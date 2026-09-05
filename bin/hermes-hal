@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Start the HAL server if it isn't running, wait for it to become healthy,
+# Start the Hermes Hal server if it isn't running, wait for it to become healthy,
 # and open the eye in a browser. Works on macOS and Linux.
 #
-# Install:  ln -s "$(pwd)/bin/hal" ~/.local/bin/hal
+# Install:  ln -s "$(pwd)/bin/hermes-hal" ~/.local/bin/hermes-hal
 # Usage:    hal [--no-open]
 set -euo pipefail
 
@@ -24,7 +24,7 @@ healthy() { curl -sf -m 2 "$URL/api/health" >/dev/null 2>&1; }
 
 if ! healthy; then
   mkdir -p "$APP_DIR/data"
-  echo "Starting HAL at $URL (log: $APP_DIR/data/server.log)"
+  echo "Starting Hermes Hal at $URL (log: $APP_DIR/data/server.log)"
   nohup "$APP_DIR/run.sh" >> "$APP_DIR/data/server.log" 2>&1 &
 fi
 
@@ -34,11 +34,11 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 if ! healthy; then
-  echo "HAL did not become healthy at $URL — see $APP_DIR/data/server.log" >&2
+  echo "Hermes Hal did not become healthy at $URL — see $APP_DIR/data/server.log" >&2
   exit 1
 fi
 
-echo "HAL is online at $URL"
+echo "Hermes Hal is online at $URL"
 if [ "$OPEN" = 1 ]; then
   if command -v open >/dev/null 2>&1; then open "$URL"
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL"

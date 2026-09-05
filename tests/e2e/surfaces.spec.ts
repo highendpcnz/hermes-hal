@@ -53,7 +53,7 @@ test.describe("proposal bar (the Initiative)", () => {
 
     await expect(page.locator("#propbar")).toHaveClass(/show/);
     await expect(page.locator("#propbar-text")).toContainText("Clear the overdue ledger");
-    await expect.poll(() => logText(page)).toContain("HAL proposes");
+    await expect.poll(() => logText(page)).toContain("Hermes Hal proposes");
   });
 
   test("approving posts approve for that proposal — it starts an agent run", async ({ page }) => {

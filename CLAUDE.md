@@ -1,6 +1,6 @@
-# HAL 9000 frontend — Claude Code handoff
+# Hermes Hal frontend — Claude Code handoff
 
-Read `AGENTS.md` before changing anything. It is the authoritative HAL persona and
+Read `AGENTS.md` before changing anything. It is the authoritative Hermes Hal persona and
 runtime guidance; preserve it. Replies from the running bridge are spoken aloud, so
 keep user-facing prose concise and address the user as Dave.
 
@@ -10,7 +10,7 @@ The repo root is whichever directory contains `run.sh` — **do not hardcode a
 checkout path here**; the previous revision of this file named a machine that no
 longer exists and misled every agent that read it.
 
-This is a local HAL 9000 voice frontend for Hermes Agent. The Python bridge is the
+This is a local Hermes Hal voice frontend for Hermes Agent. The Python bridge is the
 source of truth for sessions, missions, permissions, chess, telemetry, viewscreen
 events, STT, and TTS. The browser surface is `static/index.html`; direction
 stylesheets are `static/bridge-option{1..4}.css` over `static/bridge-shared.css`; the

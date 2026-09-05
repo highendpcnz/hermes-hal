@@ -159,7 +159,7 @@ test.describe("chess board", () => {
     await openBoard(page);
     await page.click("#chess-resign");
 
-    await expect(page.locator("#chess-status")).toContainText("HAL wins", { timeout: 10_000 });
+    await expect(page.locator("#chess-status")).toContainText("Hermes Hal wins", { timeout: 10_000 });
     expect(await page.evaluate(() => chessGame?.status)).not.toBe("active");
 
     // Two independent guards stop play here: the client's status check, and

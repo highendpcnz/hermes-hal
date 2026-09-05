@@ -14,7 +14,7 @@ Verified viewports and states (in-app browser):
   the stage band inside the ring mandala; satellite lens discs recede along
   the horizontal axis both sides; the waveform beam runs the full viewport
   width through the eye. Timeline mission log left (dot nodes on a hairline
-  rail), Missions card top-right, tab nav top with brand left ("HAL / 9000 ·
+  rail), Missions card top-right, tab nav top with brand left ("Hermes Hal ·
   COGNITIVE ORRERY") and direction selector right, full-width command bar
   with circular send, centered telemetry status strip bottom.
 - Tablet 900 × 900: two-column layout — log column left, stage filling the

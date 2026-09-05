@@ -4,7 +4,7 @@ Framework routing: none. FastAPI serves one static frontend.
 
 ## `/`
 
-- Page: HAL Bridge
+- Page: Hermes Hal Bridge
 - Component: `static/index.html`
 - Layout: single cockpit shell documented in `layouts.md`
 - Visual runtime: `/static/assets/hal-optic.js`
