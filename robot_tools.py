@@ -137,13 +137,18 @@ def read_spatial_sensors(open_transport: Callable[[], object] | None = None) -> 
         return {"ok": False, "error": str(error)}
     try:
         client = CyberPiTelemetryClient(transport)
-        client.initialize()
+        # initialize() already reads mode and firmware; reporting them costs
+        # nothing and stops anyone answering "what mode is the board in?" from
+        # a stale log line, which is exactly the mistake this reply prevents.
+        bring_up = client.initialize()
         snapshot = client.read_snapshot()
         return {
             "ok": True,
             "ultrasonic_cm": snapshot.ultrasonic_cm,
             "yaw_deg": snapshot.yaw_deg,
             "pitch_deg": snapshot.pitch_deg,
+            "mode": getattr(bring_up.mode, "value", str(bring_up.mode)),
+            "firmware_version": bring_up.firmware_version,
         }
     except Exception as error:
         return {"ok": False, "error": str(error)}
