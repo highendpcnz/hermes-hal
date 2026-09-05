@@ -37,6 +37,9 @@ def _default_hermes_executable(name: str) -> str:
     candidates = (
         Path("~/.hermes/hermes-agent/venv/bin").expanduser() / name,
         Path("~/hermes-agent/.venv/bin").expanduser() / name,
+        # Upstream's setup-hermes.sh creates "venv", not ".venv", on its Termux
+        # path — so on the phone hermes-acp exists and was invisible here.
+        Path("~/hermes-agent/venv/bin").expanduser() / name,
     )
     for candidate in candidates:
         if candidate.is_file():

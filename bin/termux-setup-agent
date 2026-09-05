@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Install Hermes Agent (the brain) on Termux/Android.
+#
+# Separate from bin/termux-setup, which builds Hermes Hal's own voice
+# environment. The two use DIFFERENT Python versions on purpose and must not
+# share a venv:
+#
+#   Hermes Hal  — Python 3.14 (Termux default), needs piper + whisper.cpp
+#   Hermes Agent — Python 3.11-3.13, because upstream declares
+#                  requires-python = ">=3.11,<3.14"
+#
+# They talk over ACP as separate processes, never by importing each other, so
+# two interpreters is fine — and it satisfies the isolation rule for free.
+#
+# Derived from a live install on 2026-09-06; see docs/pixel-deployment.md for
+# why each step exists. Idempotent.
+set -euo pipefail
+
+AGENT_DIR="${HERMES_AGENT_DIR:-$HOME/hermes-agent}"
+PSUTIL_VERSION="${PSUTIL_VERSION:-7.2.2}"
+
+say() { printf '\n=== %s\n' "$*"; }
+
+if ! command -v pkg >/dev/null 2>&1; then
+  echo "This script is for Termux on Android." >&2
+  exit 1
+fi
+
+say "1/5  a Python upstream will accept (3.11-3.13)"
+# Termux's default python is 3.14, which upstream rejects. TUR (the Termux User
+# Repository) carries older minors. This adds a community-maintained third-party
+# APT source to the device — a deliberate choice, not a silent one.
+PY=""
+for c in python3.13 python3.12 python3.11; do
+  command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }
+done
+if [ -z "$PY" ]; then
+  echo "No compatible Python found — installing python3.13 from tur-repo"
+  pkg install -y tur-repo
+  pkg install -y python3.13
+  PY=python3.13
+fi
+"$PY" -c 'import sys; raise SystemExit(0 if (3,11) <= sys.version_info[:2] < (3,14) else 1)' \
+  || { echo "$PY is not in [3.11, 3.14)" >&2; exit 1; }
+"$PY" -c 'import ssl, ctypes, sqlite3'   # a stub interpreter fails here
+echo "using $($PY -V)"
+
+say "2/5  Rust toolchain sanity"
+# Same skew trap as bin/termux-setup — cryptography and pydantic-core both
+# need Rust, and both fail obscurely when rustc and rust-std disagree.
+if ! printf 'fn main(){}\n' > "$PREFIX/tmp/_rc.rs" 2>/dev/null ||
+   ! rustc "$PREFIX/tmp/_rc.rs" -o "$PREFIX/tmp/_rc" 2>/dev/null; then
+  pkg install -y --only-upgrade rust-std-aarch64-linux-android || true
+fi
+rm -f "$PREFIX/tmp/_rc.rs" "$PREFIX/tmp/_rc"
+
+say "3/5  build libraries Pillow and uvloop need"
+pkg install -y libjpeg-turbo libpng freetype littlecms libwebp libtiff zlib libuv
+
+say "4/5  clone and create the venv"
+[ -d "$AGENT_DIR" ] || git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$AGENT_DIR"
+cd "$AGENT_DIR"
+# Upstream's setup-hermes.sh names it "venv", not ".venv". hermes_bridge.py
+# knows to look for both.
+[ -d venv ] || "$PY" -m venv venv
+venv/bin/python -m pip install --upgrade pip setuptools wheel
+
+say "5/5  psutil (patched), then the Termux bundle"
+# psutil refuses to build with "platform android is not supported". This is not
+# Termux's doing: CPython 3.13+ reports sys.platform == "android" (PEP 738), and
+# psutil gates on LINUX = sys.platform.startswith("linux"). Termux patches this
+# for its own python-psutil package, but that build targets the system Python,
+# not this venv. Patch and install it first so pip sees the pin satisfied.
+if ! venv/bin/python -c "import psutil" 2>/dev/null; then
+  TMP="$(mktemp -d)"
+  curl -sL "https://files.pythonhosted.org/packages/source/p/psutil/psutil-${PSUTIL_VERSION}.tar.gz" \
+    -o "$TMP/psutil.tar.gz"
+  tar xzf "$TMP/psutil.tar.gz" -C "$TMP"
+  sed -i 's/^LINUX = sys.platform.startswith("linux")/LINUX = sys.platform.startswith(("linux", "android"))/' \
+    "$TMP/psutil-${PSUTIL_VERSION}/psutil/_common.py"
+  grep -q 'android' "$TMP/psutil-${PSUTIL_VERSION}/psutil/_common.py" \
+    || { echo "psutil patch did not apply — upstream source changed" >&2; exit 1; }
+  venv/bin/python -m pip install --no-build-isolation "$TMP/psutil-${PSUTIL_VERSION}"
+  rm -rf "$TMP"
+fi
+venv/bin/python -c "import psutil; print('psutil', psutil.__version__, 'ok')"
+
+# ~15 minutes of Rust and C compiling on a Pixel. cryptography and pydantic-core
+# are the long poles.
+venv/bin/python -m pip install -e ".[termux]" -c constraints-termux.txt
+
+say "CLI on PATH"
+cat > "$PREFIX/bin/hermes" <<EOF
+#!/usr/bin/env bash
+unset PYTHONPATH
+unset PYTHONHOME
+exec "$AGENT_DIR/venv/bin/python" "$AGENT_DIR/hermes" "\$@"
+EOF
+chmod +x "$PREFIX/bin/hermes"
+
+say "Done."
+hermes --version 2>&1 | head -3
+cat <<'NEXT'
+
+Hermes Agent is installed but has NO CREDENTIALS, so it cannot answer yet.
+That step is yours — it is interactive and involves secrets:
+
+  hermes setup
+
+Do not copy auth.json from another machine unless you intend to share that
+credential with this device. Verify with an authenticated inference test
+before claiming the backend works here.
+NEXT

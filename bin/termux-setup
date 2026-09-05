@@ -35,6 +35,25 @@ say "1/7  Termux packages"
 pkg install -y python-onnxruntime rust cmake ninja ffmpeg git clang make curl \
   pkg-config libffi openssl
 
+say "1b/7  Rust toolchain sanity"
+# Termux ships rustc and its std library as separate packages, and they can
+# drift apart: rustc 1.98.1 rejects rlibs built by 1.98.0 with "crate `std`
+# required to be available in rlib format, but was not found in this form".
+# That reads like a missing toolchain and is really a patch-version skew; it
+# breaks EVERY Rust-backed pip build (pydantic-core, cryptography, maturin).
+# Observed live on 2026-09-06.
+if ! printf 'fn main(){}\n' > "$PREFIX/tmp/_rustcheck.rs" 2>/dev/null ||
+   ! rustc "$PREFIX/tmp/_rustcheck.rs" -o "$PREFIX/tmp/_rustcheck" 2>/dev/null; then
+  echo "rustc cannot build a trivial binary — realigning rust-std with rust"
+  pkg install -y --only-upgrade rust-std-aarch64-linux-android || true
+  rustc "$PREFIX/tmp/_rustcheck.rs" -o "$PREFIX/tmp/_rustcheck" 2>/dev/null \
+    && echo "rust toolchain repaired" \
+    || echo "WARNING: rustc still cannot build; Rust-backed wheels will fail"
+else
+  echo "rust toolchain builds cleanly"
+fi
+rm -f "$PREFIX/tmp/_rustcheck.rs" "$PREFIX/tmp/_rustcheck"
+
 say "2/7  venv (with access to Termux's native packages)"
 [ -d "$VENV" ] || python3 -m venv --system-site-packages "$VENV"
 # --no-build-isolation resolves build tools via PATH, so the venv must be

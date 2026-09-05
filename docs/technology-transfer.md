@@ -95,6 +95,13 @@ and pip will otherwise compile CMake itself from source. Each was hours.
 builds was verified end to end there — see `pixel-deployment.md` for the
 measurements and for the two bugs that first run found.
 
+## Fourth increment: the agent on the phone
+
+Not a transfer — `hal` runs a local Gemma brain and has nothing to say about
+Hermes Agent on Android. Recorded here because it completes the deployment
+story the earlier increments started: `bin/termux-setup-agent` and the agent
+section of `pixel-deployment.md`.
+
 ## Transfer ledger
 
 

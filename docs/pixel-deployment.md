@@ -124,15 +124,68 @@ above the −45 dBFS gate, so the gate is permissive here. It is doing its job
 against digital silence; whether it rejects a genuinely quiet room on this
 hardware has not been measured.
 
+## The agent: `bin/termux-setup-agent`
+
+Hermes Agent installs on the phone, verified live on 2026-09-06 — v0.21.0, CLI
+on PATH, `acp` importing at protocol version 1, which is what `hermes_bridge`
+needs. Three obstacles, none of them obvious from the error messages.
+
+**Upstream requires Python 3.11–3.13; Termux's default is 3.14.** Not
+negotiable — `requires-python = ">=3.11,<3.14"`, and `setup-hermes.sh` checks
+it. TUR (the Termux User Repository) carries older minors: `pkg install
+tur-repo && pkg install python3.13`. That adds a community-maintained
+third-party APT source to the device, which is a real decision, not a detail.
+
+Hermes Hal keeps running on 3.14 with its own venv. The two never share an
+interpreter — they talk over ACP as separate processes — so the split costs
+nothing and satisfies the isolation rule for free.
+
+**`rust` and `rust-std` had drifted apart, and it broke every Rust build.**
+
+```
+rust                            1.98.1
+rust-std-aarch64-linux-android  1.98.0
+```
+
+rustc 1.98.1 will not accept rlibs built by 1.98.0, and says so as ``crate
+`std` required to be available in rlib format, but was not found in this
+form`` — which reads like a missing or broken toolchain. The tell is that
+`rustc` could not compile `fn main(){}` either. `pkg install --only-upgrade
+rust-std-aarch64-linux-android` fixes it. This is latent on any Termux box and
+breaks `pydantic-core`, `cryptography` and `maturin` alike, so both setup
+scripts now check for it up front by compiling a trivial binary.
+
+**`psutil` refuses Android outright** — `platform android is not supported`.
+This is CPython's doing, not Termux's: 3.13+ reports `sys.platform ==
+"android"` (PEP 738), and psutil gates on `LINUX =
+sys.platform.startswith("linux")`. Choosing an older minor does not help;
+3.11, 3.13 and 3.14 all report `android` here. Termux patches this for its own
+`python-psutil`, but that build targets the system interpreter rather than this
+venv, so the script patches and installs psutil itself before the bundle.
+
+Expect any pinned dependency that gates on `sys.platform` to need the same
+treatment.
+
+With those handled the bundle builds clean: 77 packages, 13 compiled from
+source in about 12 minutes, every wheel carrying a real
+`android_24_arm64_v8a` tag. `cryptography` and `pydantic-core` are the long
+poles at roughly 2 and 5 minutes.
+
+One repo fix came out of this: `hermes_bridge._default_hermes_executable`
+looked for `~/hermes-agent/.venv/bin`, but upstream's Termux path creates
+`venv` without the dot, so `hermes-acp` was present and invisible. Both names
+are searched now.
+
 ## What still has to be proven on the device
 
-1. **Hermes Agent itself does not exist on this phone** — no binary, no
-   `~/.hermes`. Everything above is the voice stack answering with no brain
-   behind it. This is now the single largest open item, and it is independent
-   of every transfer: it could have been tested first. Verify Luna subscription
-   access with an authenticated inference test before claiming that path works.
+1. **Credentials.** `~/.hermes` exists on the phone but holds no `auth.json`,
+   so the agent cannot answer anything yet. Run `hermes setup` on the device.
+   Copying `auth.json` from another machine means sharing that credential with
+   the phone — a decision for whoever owns it, not a deployment step. Verify
+   Luna subscription access with an authenticated inference test before
+   claiming that backend works here.
 2. A full `HAL_TERMUX_LISTEN=1` conversation — wake phrase, turn, spoken
-   sign-off — which needs (1) first.
+   sign-off — which needs (1).
 3. Audible playback through `termux-media-player`. hal confirmed this on this
    handset; this repo's own path has not been listened to.
 4. Battery: Android killed hal's Termux twice before a battery exemption was
