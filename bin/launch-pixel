@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Start Hermes Hal on the Pixel, with CyberPi access if the board is present.
+#
+# Adapted from hal's launch_v4b.sh at commit 1318bd1 (docs/technology-transfer.md).
+#
+# Two things here are load-bearing and both were learned the hard way:
+#
+#   1. PYTHONUNBUFFERED. Without it Python block-buffers when stdout is a file,
+#      and the whole [termux-voice] diagnostic trail sits invisible in the
+#      buffer for hours — the voice loop looks silent while it is in fact
+#      logging. Cost hal real debugging time on 2026-09-04.
+#
+#   2. The USB claim. The CyberPi's CH340 bridge has NO /dev node on Android.
+#      termux-usb must hand off a raw fd via TERMUX_USB_FD or
+#      robot/android_usb.py never runs, the code falls through to a pyserial
+#      path that does not exist on this platform, and every telemetry and
+#      motion call fails. hal shipped this bug live for ~2h with the CyberPi
+#      fully connected and healthy, because the launcher started run.sh
+#      directly.
+#
+# Motion stays off unless HAL_ROBOT_MOTION=1 is already exported. This script
+# will not turn it on for you.
+set -uo pipefail
+
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$APP_DIR"
+mkdir -p data
+
+export PYTHONUNBUFFERED=1
+export HAL_UI="${HAL_UI:-lite}"
+
+USB_DEVICE="$(termux-usb -l 2>/dev/null | python3 -c 'import json,sys
+try:
+    devices = json.load(sys.stdin)
+except Exception:
+    devices = []
+print(devices[0] if devices else "")' 2>/dev/null)"
+
+if [ -z "$USB_DEVICE" ]; then
+  echo "WARNING: no USB device from 'termux-usb -l' — starting WITHOUT CyberPi" >&2
+  echo "         access. Sensor and motion tool calls will fail; everything" >&2
+  echo "         else works. Check the board is on its own battery." >&2
+  setsid nohup ./run.sh > data/run-pixel.log 2>&1 < /dev/null &
+  echo "started pid=$! (no USB device)"
+else
+  # -r prompts for permission if needed; -E passes the fd as TERMUX_USB_FD.
+  setsid nohup termux-usb -r -E -e "$APP_DIR/run.sh" "$USB_DEVICE" \
+    > data/run-pixel.log 2>&1 < /dev/null &
+  echo "started pid=$! (usb device=$USB_DEVICE)"
+fi
+
+echo "log: $APP_DIR/data/run-pixel.log"
+echo "motion: ${HAL_ROBOT_MOTION:-0} (1 = motors enabled)"

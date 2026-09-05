@@ -31,11 +31,19 @@ fi
 # The agent binaries are spawned as subprocesses, so they are independent of the
 # venv running HAL — resolve them against a real Hermes install rather than
 # assuming they sit beside uvicorn. An isolated .venv has neither.
+#
+# This list must match hermes_bridge._default_hermes_executable's. It drifted
+# once and cost real time: whatever this resolves is EXPORTED as
+# HAL_HERMES_ACP_BIN, which overrides the Python-side discovery entirely — so a
+# miss here is not a fallback, it is a wrong answer that wins. Upstream's Termux
+# installer creates "venv", not ".venv"; missing that name made every turn fail
+# with a bare FileNotFoundError while hermes-acp sat installed and working.
 _find_hermes_bin() {
   local name="$1" candidate
   for candidate in "$HERMES_VENV/bin/$name" \
                    "$HOME/.hermes/hermes-agent/venv/bin/$name" \
-                   "$HOME/hermes-agent/.venv/bin/$name"; do
+                   "$HOME/hermes-agent/.venv/bin/$name" \
+                   "$HOME/hermes-agent/venv/bin/$name"; do
     [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return; }
   done
   command -v "$name" 2>/dev/null || printf '%s\n' "$HERMES_VENV/bin/$name"
