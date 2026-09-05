@@ -90,6 +90,17 @@ def open_robot_transport(robot_port: str = ""):
     try:
         import serial
     except ImportError as error:
+        # On Android the pyserial path is not the one that should have been
+        # taken, so "install pyserial" would send you off fixing the wrong
+        # thing. The real cause is an unclaimed device: TERMUX_USB_FD is set by
+        # `termux-usb -E -r <device>`, and is unset when nothing is claimed.
+        if os.environ.get("PREFIX", "").endswith("com.termux/files/usr"):
+            raise RobotUnavailable(
+                "no USB device claimed: TERMUX_USB_FD is unset. Check the board "
+                "is on its own battery and enumerating (`termux-usb -l` must not "
+                "be empty), then launch under `termux-usb -E -r <device>`. "
+                "See docs/pixel-deployment.md."
+            ) from error
         raise RobotUnavailable(
             "pyserial is required for hardware access; see requirements.txt"
         ) from error
