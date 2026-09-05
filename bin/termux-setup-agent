@@ -89,6 +89,31 @@ venv/bin/python -c "import psutil; print('psutil', psutil.__version__, 'ok')"
 # are the long poles.
 venv/bin/python -m pip install -e ".[termux]" -c constraints-termux.txt
 
+say "5b/5  relink cryptography against libpython"
+# pyo3's abi3 mode deliberately omits libpython from the extension's NEEDED
+# list so manylinux wheels stay portable across CPython versions. On glibc the
+# undefined symbols resolve from the global namespace at load; Android's linker
+# does not do that, so `import cryptography...._rust` dies with
+#   cannot locate symbol "PyModule_Type"
+# and takes the whole mcp package down with it. Every other pyo3 wheel here
+# (pydantic-core, jiter, rpds, watchfiles) links libpython and is fine, so
+# cryptography is the exception rather than the rule.
+#
+# RUSTFLAGS does not survive to the final link through setuptools-rust, so the
+# fix is applied to the built artifact. Diagnose any recurrence with
+# `readelf -d <ext>.so | grep NEEDED` — a missing libpython is the bug.
+CRYPTO_SO="$(ls venv/lib/python3.*/site-packages/cryptography/hazmat/bindings/_rust*.so 2>/dev/null | head -1)"
+if [ -n "$CRYPTO_SO" ] && ! venv/bin/python -c "from cryptography.hazmat.bindings._rust import exceptions" 2>/dev/null; then
+  pkg install -y patchelf
+  PYSO="libpython$("$PY" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")').so"
+  cp "$CRYPTO_SO" "$CRYPTO_SO.bak"
+  patchelf --add-needed "$PYSO" "$CRYPTO_SO"
+  venv/bin/python -c "from cryptography.hazmat.bindings._rust import exceptions; print('cryptography relinked against', '$PYSO')" \
+    || echo "WARNING: cryptography still will not load; mcp will be unavailable"
+else
+  echo "cryptography loads cleanly — no relink needed"
+fi
+
 say "CLI on PATH"
 cat > "$PREFIX/bin/hermes" <<EOF
 #!/usr/bin/env bash
@@ -101,6 +126,9 @@ chmod +x "$PREFIX/bin/hermes"
 say "Done."
 hermes --version 2>&1 | head -3
 cat <<'NEXT'
+
+Robot tools: with the bridge running, register the MCP server once:
+  hermes mcp add hal-robot --command <agent-venv>/bin/python --args -m robot.mcp_server
 
 Hermes Agent is installed but has NO CREDENTIALS, so it cannot answer yet.
 That step is yours — it is interactive and involves secrets:

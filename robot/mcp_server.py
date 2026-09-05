@@ -29,12 +29,12 @@ import os
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 BRIDGE_URL = os.environ.get("HAL_BRIDGE_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT = float(os.environ.get("HAL_ROBOT_TOOL_TIMEOUT", "30"))
 
-server = FastMCP("hal-robot")
+server = MCPServer("hal-robot")
 
 
 def _post(path: str, payload: dict) -> dict:

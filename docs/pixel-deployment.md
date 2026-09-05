@@ -189,6 +189,25 @@ hermes mcp add hal-robot -- python3 -m robot.mcp_server
 until a person is watching the robot.** Sensors and emergency stop are always
 available.
 
+### The agent driving the robot, verified 2026-09-06
+
+Registered with `hermes mcp add hal-robot --command <agent-venv>/bin/python
+--args -m robot.mcp_server`; Hermes discovered all four tools. Asked through
+`/api/say`, in HAL's voice, with motion disabled:
+
+```
+HAL          : The nearest obstacle is 300 centimeters away, Dave.   (8.69s)
+ground truth : {"ok":true,"ultrasonic_cm":300.0,...}
+```
+
+The gates, checked at the same time:
+
+```
+move without a grant     -> {"ok":false,"error":"motion is not authorized for this session"}
+authorize, motion off    -> {"ok":false,"error":"motion is disabled (set HAL_ROBOT_MOTION=1)"}
+emergency_stop           -> {"ok":true}     (reaches the chassis even with motion off)
+```
+
 ### Sensors verified on the chassis, 2026-09-06
 
 First time this repo has touched the hardware. Motion stayed off throughout.
@@ -240,6 +259,47 @@ firmware side: 50 cm / 30% normally, 5 cm / 10% under crawl. Do not raise those
 limits to compensate. If the margin stops being acceptable, the fix is a
 recorder running concurrently with the turn feeding a stop matcher, or a
 hardware stop button.
+
+## `cryptography` and the Android linker
+
+`import mcp` fails on the phone with:
+
+```
+ImportError: dlopen failed: cannot locate symbol "PyModule_Type"
+  referenced by cryptography/hazmat/bindings/_rust.abi3.so
+```
+
+which blocks registering the robot MCP server. The cause is neither Termux nor
+Hermes, and the symbol is not actually missing — `libpython3.13.so` exists and
+exports it. Compare what the two extensions link:
+
+```
+pydantic_core  NEEDED: libpython3.13.so, libdl.so, libc.so     -> imports fine
+cryptography   NEEDED: libssl.so.3, libcrypto.so.3, libdl, libc -> fails
+```
+
+pyo3's abi3 mode deliberately does not link libpython, so that manylinux wheels
+stay portable across CPython versions. On glibc the undefined symbols resolve
+from the global namespace at load; **Android's linker does not do that** — an
+undefined symbol must come from a `DT_NEEDED` library. Every other pyo3 wheel
+here (pydantic-core, jiter, rpds, watchfiles) links libpython and works, so
+cryptography is the odd one out rather than the rule.
+
+Rebuilding with `RUSTFLAGS="-C link-arg=-lpython3.13"` does **not** work — the
+flag does not survive to the final link through setuptools-rust, and `readelf`
+shows the same NEEDED list afterwards. Patch the built artifact instead:
+
+```bash
+patchelf --add-needed libpython3.13.so \
+  <venv>/lib/python3.13/site-packages/cryptography/hazmat/bindings/_rust.abi3.so
+```
+
+`bin/termux-setup-agent` does this automatically, and only when the import
+actually fails.
+
+Expect this class of failure from any abi3 Rust extension that omits libpython.
+The diagnosis is quick once known: `readelf -d <ext>.so | grep NEEDED`, and if
+`libpython` is absent, that is the bug.
 
 ## What still has to be proven on the device
 
