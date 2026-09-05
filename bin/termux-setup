@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Build a working Hermes Hal environment on Termux/Android.
+#
+# Every step here exists because the obvious version of it fails. The recipe
+# was established on hal's Pixel 7 Pro port (commit 1318bd1, its
+# docs/termux-port-status.md) and is recorded for this repo in
+# docs/pixel-deployment.md, which explains *why* each step is shaped this way.
+# Read that before changing anything here.
+#
+# Idempotent: safe to re-run. Skips work that is already done.
+# Usage:  bash bin/termux-setup          (from the repo root, on the phone)
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VENV="$APP_DIR/.venv"
+STT_MODEL="${HAL_STT_MODEL:-base.en}"
+
+say() { printf '\n=== %s\n' "$*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+if [ ! -d "${PREFIX:-}/bin" ] || ! have pkg; then
+  echo "This script is for Termux on Android. Nothing here applies to a Mac." >&2
+  exit 1
+fi
+
+say "1/7  Termux packages"
+# onnxruntime and numpy come from Termux's own prebuilt packages — building
+# them from pip would be a far bigger undertaking than everything below.
+# ctranslate2 is deliberately NOT installed: its Termux build has empty
+# model bindings, so faster-whisper can never load a model there. whisper.cpp
+# is the STT backend instead (step 6).
+# rust: pydantic-core needs it, and rustup does not support Android at all —
+# Termux's package is pre-configured for aarch64-unknown-linux-android.
+# cmake/ninja: so pip does not compile CMake itself from source (many minutes).
+pkg install -y python-onnxruntime rust cmake ninja ffmpeg git clang make curl \
+  pkg-config libffi openssl
+
+say "2/7  venv (with access to Termux's native packages)"
+[ -d "$VENV" ] || python3 -m venv --system-site-packages "$VENV"
+# --no-build-isolation resolves build tools via PATH, so the venv must be
+# ACTIVATED, not addressed as .venv/bin/pip. Invoking pip by path leaves
+# .venv/bin off PATH and the build subprocess dies with
+# "FileNotFoundError: 'maturin'" while maturin is installed correctly.
+# shellcheck disable=SC1091
+. "$VENV/bin/activate"
+
+say "3/7  core web stack"
+pip install --upgrade pip
+pip install 'fastapi>=0.115' 'uvicorn[standard]>=0.32' \
+  'python-multipart>=0.0.9' 'pydantic>=2' 'agent-client-protocol==0.9.0'
+
+say "4/7  espeak-ng (from source — Termux only ships the incompatible 'espeak')"
+if ! pkg-config --exists espeak-ng 2>/dev/null; then
+  [ -d ~/espeak-ng ] || git clone --depth 1 https://github.com/espeak-ng/espeak-ng.git ~/espeak-ng
+  cmake -B ~/espeak-ng/build -S ~/espeak-ng -GNinja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DUSE_ASYNC=OFF -DUSE_MBROLA=OFF -DUSE_LIBSONIC=OFF \
+    -DUSE_LIBPCAUDIO=OFF -DUSE_KLATT=OFF -DUSE_SPEECHPLAYER=OFF \
+    -DBUILD_SHARED_LIBS=ON
+  cmake --build ~/espeak-ng/build
+  # The install step is what registers espeak-ng.pc for pkg-config, which
+  # piper's C++ bridge build looks for. Building without installing is not enough.
+  cmake --install ~/espeak-ng/build
+else
+  echo "espeak-ng already registered with pkg-config — skipping"
+fi
+
+say "5/7  piper-tts (from git — PyPI's sdist cannot build a working one)"
+# PyPI's piper-tts sdist ships no libpiper/ at all, so scikit-build silently
+# produces a data-only py3-none-any wheel with no compiled extension and no
+# error. `import piper` then works while synthesize_wav() does not. Clone the
+# real repo, which does have libpiper/CMakeLists.txt.
+if ! python -c "import piper, pathlib, sys;
+sys.exit(0 if list(pathlib.Path(piper.__file__).parent.glob('espeakbridge*.so')) else 1)" 2>/dev/null; then
+  pip install scikit-build setuptools-scm 'hatch-fancy-pypi-readme>=23.2'
+  [ -d ~/piper1-gpl ] || git clone --depth 1 --recurse-submodules \
+    https://github.com/OHF-voice/piper1-gpl.git ~/piper1-gpl
+  pip uninstall -y piper-tts 2>/dev/null || true
+  pip install --no-build-isolation ~/piper1-gpl
+else
+  echo "piper espeakbridge already built — skipping"
+fi
+python -c "import piper, pathlib
+so = list(pathlib.Path(piper.__file__).parent.glob('espeakbridge*.so'))
+assert so, 'piper built without espeakbridge — see docs/pixel-deployment.md'
+print('espeakbridge:', so[0].name)"
+
+say "6/7  whisper.cpp (the STT backend on this platform)"
+if [ ! -x ~/whisper.cpp/build/bin/whisper-cli ]; then
+  [ -d ~/whisper.cpp ] || git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git ~/whisper.cpp
+  # -DGGML_NO_OPENMP=ON is required for stability on Termux, not optional tuning.
+  cmake -B ~/whisper.cpp/build -S ~/whisper.cpp -GNinja \
+    -DCMAKE_BUILD_TYPE=Release -DGGML_NO_OPENMP=ON
+  cmake --build ~/whisper.cpp/build -j4
+else
+  echo "whisper-cli already built — skipping"
+fi
+[ -f ~/whisper.cpp/models/ggml-$STT_MODEL.bin ] || \
+  (cd ~/whisper.cpp && bash ./models/download-ggml-model.sh "$STT_MODEL")
+
+say "7/7  Termux:API (phone mic, speaker, and the on-device loop)"
+pkg install -y termux-api
+have termux-microphone-record || echo "WARNING: install the Termux:API *app* too, not just this package"
+
+say "Done. Verify:"
+cat <<'NEXT'
+  source .venv/bin/activate
+  HAL_SKIP_MODELS=1 python tests/run.py     # pure-python suite
+  ./run.sh                                  # then open http://127.0.0.1:8000/lite
+
+  Hands-free (phone mic + speaker, no browser):
+  HAL_TERMUX_LISTEN=1 ./run.sh
+
+  whisper.cpp and the voice model are auto-detected by presence — no flags
+  needed if they are at their default paths. See docs/pixel-deployment.md.
+NEXT
