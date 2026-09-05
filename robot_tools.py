@@ -12,9 +12,17 @@ server (`robot/mcp_server.py`) proxies to this app's own `/internal/robot/*`
 routes, and those routes call the functions here. One implementation of the
 safety-relevant logic, not a second copy living in the MCP process.
 
-**Motion is disabled unless HAL_ROBOT_MOTION=1.** Sensors, telemetry and the
-camera are read-only and always available when hardware is present; anything
-that turns a motor is off by default. That is not timidity about an unfinished
+**Motion is disabled unless HAL_ROBOT_MOTION=1.** Sensors and telemetry are
+read-only and always available when hardware is present; anything that turns a
+motor is off by default.
+
+**There is no camera tool here yet.** `robot/camera.py` was transferred and
+works on the Pixel — both the `termux-camera-photo` main-lens path and the
+`app_process` ultra-wide path capture real frames — but nothing calls it. The
+wrappers hal has in its own `robot_tools.py` (`auto_capture_frame`'s backend
+selection, `capture_visual_scene`'s tool result and viewscreen persistence)
+were not ported, and `robot/mcp_server.py` exposes no vision tool. Treat the
+camera as present hardware with no software path to the model. That is not timidity about an unfinished
 feature — see the delivery limits below, which are properties of the design
 rather than bugs awaiting a fix.
 
