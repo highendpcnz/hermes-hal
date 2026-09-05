@@ -368,9 +368,10 @@ check("prompt bounds match MotionLimits turn", _lim.max_turn_degrees == 180)
 from robot.crawl import CrawlController, CrawlLimits, CrawlSafetyError  # noqa: E402
 
 _lim = CrawlLimits()
-check("crawl segment cap is 5cm", _lim.max_segment_cm == 5)
+check("crawl segment cap is 15cm", _lim.max_segment_cm == 15)
 check("crawl speed cap is 10%", _lim.max_speed_pct == 10)
-check("crawl total budget is 25cm", _lim.max_total_distance_cm == 25)
+check("crawl total budget is 200cm", _lim.max_total_distance_cm == 200)
+check("crawl episode window is 5 minutes", _lim.max_duration_seconds == 300.0)
 check("crawl demands more clearance than the base interlock",
       _lim.min_obstacle_cm > MotionLimits().min_obstacle_cm)
 
@@ -409,15 +410,15 @@ check("crawl refuses a low-confidence clear",
       _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
 _c.record_assessment("frame-1", "clear", 0.95)
 check("crawl refuses an over-long segment",
-      _crawl_refuses(lambda: _c.prepare_drive(6, 10)))
+      _crawl_refuses(lambda: _c.prepare_drive(_lim.max_segment_cm + 1, 10)))
 check("crawl refuses an over-fast segment",
-      _crawl_refuses(lambda: _c.prepare_drive(5, 11)))
+      _crawl_refuses(lambda: _c.prepare_drive(5, _lim.max_speed_pct + 1)))
 _c.prepare_drive(5, 10)
 check("crawl accepts a clear, in-bounds segment", True)
 _c.consume_drive(5)
 check("crawl spends the assessment after a step",
       _crawl_refuses(lambda: _c.prepare_drive(5, 10)))
-check("crawl decrements the budget", _c.state.remaining_cm == 20)
+check("crawl decrements the budget", _c.state.remaining_cm == _lim.max_total_distance_cm - 5)
 
 # A stale frame must not authorise a step, however good the assessment.
 _clock = [1000.0]

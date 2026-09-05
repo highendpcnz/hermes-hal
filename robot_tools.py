@@ -73,7 +73,12 @@ MOTION_ENABLED = os.environ.get("HAL_ROBOT_MOTION", "0").strip().lower() not in 
     "",
 }
 ROBOT_PORT = os.environ.get("HAL_ROBOT_PORT", "/dev/ttyUSB0")
-MOTION_PERMISSION_TIMEOUT = float(os.environ.get("HAL_MOTION_PERMISSION_TIMEOUT", "60"))
+# The default used to be 60s, and it cost two wasted arm attempts on
+# 2026-09-06: a person approving over a chat relay, rather than clicking the
+# permission bar in front of the robot, needs longer than a local approval
+# would. A rushed yes/no is not a safety feature, so the default is generous
+# rather than something to remember to override at every launch.
+MOTION_PERMISSION_TIMEOUT = float(os.environ.get("HAL_MOTION_PERMISSION_TIMEOUT", "300"))
 
 
 class RobotUnavailable(RuntimeError):

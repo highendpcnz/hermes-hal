@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Request approval for one crawl episode and print a ready-to-run approve
+# command. Removes the SSE-listener-then-arm race that cost two restart
+# cycles on 2026-09-06 (a late subscriber misses the permission_request that
+# arm() fires the instant it runs), by starting the listener before the arm
+# request rather than after it.
+#
+# This intentionally does NOT drive the observe/step loop — arming still
+# needs a person's explicit approval, and each segment's clear/blocked call
+# is a real judgment (of a caption, not a picture — see robot_tools.py), not
+# something to template away. Drive segments yourself with plain curl once
+# armed; that part was never the friction.
+#
+# Run this ON THE PHONE, with the bridge already up.
+# Usage: bin/crawl-arm [session_token]
+set -euo pipefail
+TOKEN="${1:-probe}"
+BASE="http://127.0.0.1:8000"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+timeout 320 curl -s -N "$BASE/api/events" -b "hal_session=$TOKEN" > "$TMP/evt.txt" 2>/dev/null &
+LISTENER=$!
+sleep 3
+curl -s --max-time 320 -X POST "$BASE/internal/robot/crawl/arm" \
+  -H "Content-Type: application/json" -d "{\"session_token\":\"$TOKEN\"}" \
+  -o "$TMP/arm.json" >/dev/null 2>&1 &
+ARM_PID=$!
+sleep 8
+
+REQUEST_ID="$(python3 - "$TMP/evt.txt" <<'PY'
+import json, sys
+for line in open(sys.argv[1]):
+    if line.startswith("data:"):
+        try:
+            d = json.loads(line[5:].strip())
+        except Exception:
+            continue
+        if d.get("type") == "permission_request":
+            print(d.get("request_id", ""))
+            break
+PY
+)"
+kill "$LISTENER" 2>/dev/null || true
+
+if [ -z "$REQUEST_ID" ]; then
+  echo "No permission_request captured — arm may have failed outright:" >&2
+  cat "$TMP/arm.json" 2>/dev/null >&2 || echo "(no result yet)" >&2
+  exit 1
+fi
+
+echo "Approve or deny (waits up to 5 minutes):" >&2
+echo "  curl -X POST $BASE/api/permission/$REQUEST_ID -H 'Content-Type: application/json' -b 'hal_session=$TOKEN' -d '{\"decision\":\"allow\"}'" >&2
+echo >&2
+echo "Waiting for the decision..." >&2
+wait "$ARM_PID" 2>/dev/null || true
+cat "$TMP/arm.json"
+echo

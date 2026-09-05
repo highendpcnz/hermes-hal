@@ -22,12 +22,23 @@ Assessment = Literal["clear", "blocked", "unknown"]
 
 @dataclass(frozen=True, slots=True)
 class CrawlLimits:
-    """Deliberately conservative defaults for an experimental supervised mode."""
+    """Defaults for an experimental supervised mode.
 
-    max_segment_cm: int = 5
+    Loosened 2026-09-06, after the first hardware-verified episode (3 of 5
+    possible 5cm segments, all clear, before the 60s clock ran out — see
+    docs/technology-transfer.md). The loosening is deliberately one-axis:
+    total distance and episode duration, which bound how *long* an
+    unsupervised episode may run, not how *fast* or how *blind* any single
+    motion is. max_speed_pct, min_obstacle_cm and min_vision_confidence are
+    untouched — those are what keeps one segment survivable if the
+    description-based assessment is wrong (see the module note on Ollama
+    Cloud's tool-result 500 for why that assessment reads prose, not pixels).
+    """
+
+    max_segment_cm: int = 15
     max_speed_pct: int = 10
-    max_total_distance_cm: int = 25
-    max_duration_seconds: float = 60.0
+    max_total_distance_cm: int = 200
+    max_duration_seconds: float = 300.0
     max_frame_age_seconds: float = 15.0
     min_vision_confidence: float = 0.9
     min_obstacle_cm: float = 25.0
