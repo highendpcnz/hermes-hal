@@ -355,6 +355,42 @@ turn  : 10.25s   (capture 2.2s + caption 1.4s + agent + TTS)
 If captioning fails the frame is still reported as captured, with
 `description_error` — a failed caption is not a failed look.
 
+## Hermes Agent latency: a self-inflicted skill, not the model or reasoning setting
+
+Measured 2026-09-06. A fresh session asking a one-tool question
+("how far away is the nearest obstacle") went from an early 8.69s/1-call
+baseline to 40+s/9-10 calls of blind exploration (`tool_search`,
+`search_files`, `read_file`, `list_resources`...) before finding the right
+tool. Neither `agent.reasoning_effort` nor swapping the primary model
+(`gpt-5.4-mini` -> `gpt-5.6-luna`) explained it -- both showed the identical
+pattern once tested directly.
+
+The actual cause: `auxiliary.background_review` -- Hermes' automatic
+post-turn "should any skill/memory be saved?" reflection -- had written a
+skill mid-session (`autonomous-ai-agents/bridge-backed-mcp-tools`, tagged
+`sensors, camera, robot, session-token`) that pointed at a reference file
+(`references/bridge-backed-mcp.md`) it never created. Every fresh session
+touching `hal-robot`'s tools tried to read that promised guidance, failed,
+and fell back to blind exploration to reconstruct it by hand.
+
+Two things fixed it:
+
+- Quarantined the broken skill (`~/.hermes/skills-quarantine/`, moved not
+  deleted). Cut the cold-start turn from 40.80s/10 calls to 30.83s/6 calls.
+- Confirmed the remaining cost is **one-time per session, not per-turn**: a
+  second question in the SAME session went straight to the tool (7.62s,
+  2 calls, 99% cache hit). This matters directly for crawl: `crawl_arm`,
+  `crawl_observe` and `crawl_step` all share one session, so only the first
+  tool-touching turn of an episode pays the cold-start cost.
+- Disabled `auxiliary.background_review.enabled` outright, since it is what
+  wrote the broken skill in the first place, silently, with no review step.
+  `/refine` still works for an explicit, on-demand version of the same idea.
+
+If a session ever goes back to unexplained multi-call exploration on a tool
+it has used before, check `find ~/.hermes/skills -name SKILL.md -newermt
+"<session start>"` for a skill background_review wrote mid-session before
+concluding it is a model or config problem.
+
 ## What still has to be proven on the device
 
 1. **No motion has been commanded from this repo.** Sensors are verified
