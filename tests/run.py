@@ -194,19 +194,142 @@ check("ordinary speech is not an answer",
 
 # --- wake-word gate --------------------------------------------------------------
 
-check("wake matches plain address", main._WAKE_RE.match("HAL, open the log.") is not None)
+# The attention word is required by default (HAL_WAKE_REQUIRE_ATTENTION), so a
+# bare name no longer wakes anything — that is the documented cost of not
+# false-waking on televised dialogue. See _WAKE_RE's comment in main.py.
+check("wake requires attention by default", main.WAKE_REQUIRE_ATTENTION)
 check("wake matches hey-prefix", main._WAKE_RE.match("Hey HAL what's our status?") is not None)
-check("wake accepts local STT hell homophone", main._WAKE_RE.match("Hell, open the log.") is not None)
-check("wake accepts hall homophone", main._WAKE_RE.match("Hall, open the log.") is not None)
-_bare = main._WAKE_RE.match("Hal.")
-check("bare HAL leaves empty remainder", _bare is not None and _bare.group(1).strip() == "")
-check("wake rejects ambient speech", main._WAKE_RE.match("How are you doing?") is None)
+check("wake matches hello-prefix", main._WAKE_RE.match("Hello HAL, open the log.") is not None)
+check("wake accepts hell homophone with attention",
+      main._WAKE_RE.match("Hey hell, open the log.") is not None)
+check("wake accepts hall homophone with attention",
+      main._WAKE_RE.match("OK hall, open the log.") is not None)
+check("wake rejects a bare address", main._WAKE_RE.match("HAL, open the log.") is None)
 check("wake rejects hello", main._WAKE_RE.match("Hello there") is None)
 check("wake rejects embedded hal", main._WAKE_RE.match("Halt the presses") is None)
+# The regression these exist to prevent: an ambient question that merely opens
+# with a homophone of the name must never reach the agent.
+check("wake rejects how-are-you", main._WAKE_RE.match("How are you doing?") is None)
+check("wake rejects a hull sentence", main._WAKE_RE.match("Hull integrity is fine") is None)
+check("wake rejects hell-of-a-day", main._WAKE_RE.match("Hell of a day") is None)
+check("wake rejects a bare howl", main._WAKE_RE.match("Howl, open the log.") is None)
 check(
     "wake keeps the remainder",
-    main._WAKE_RE.match("HAL, start mission scan logs").group(1).strip() == "start mission scan logs",
+    main._WAKE_RE.match("Hey HAL, start mission scan logs").group(1).strip()
+    == "start mission scan logs",
 )
+# Normalization runs before the gate, which is what lets the gate's own name
+# list stay narrow while the measured homophones still work end to end.
+check(
+    "normalized homophone reaches the gate",
+    main._WAKE_RE.match(main._normalize_hal_name("Hey how, run diagnostics.")) is not None,
+)
+check(
+    "normalized ambient question still does not",
+    main._WAKE_RE.match(main._normalize_hal_name("How are you doing?")) is None,
+)
+
+# --- _normalize_hal_name ---------------------------------------------------------
+
+check(
+    "normalize fixes hell",
+    main._normalize_hal_name("Hell, open the pod bay doors.") == "HAL, open the pod bay doors.",
+)
+check(
+    "normalize fixes howl",
+    main._normalize_hal_name("Howl, open the pod bay doors.") == "HAL, open the pod bay doors.",
+)
+check(
+    "normalize fixes how with comma",
+    main._normalize_hal_name("How, what time is it?") == "HAL, what time is it?",
+)
+check(
+    "normalize fixes hull",
+    main._normalize_hal_name("Hull, check the systems.") == "HAL, check the systems.",
+)
+check(
+    "normalize fixes hey-prefixed homophone",
+    main._normalize_hal_name("Hey howl, run diagnostics.") == "Hey HAL, run diagnostics.",
+)
+check(
+    "normalize ignores mid-sentence how",
+    main._normalize_hal_name("Tell me how to do it.") == "Tell me how to do it.",
+)
+check(
+    "normalize ignores hello",
+    main._normalize_hal_name("Hello there.") == "Hello there.",
+)
+check(
+    "normalize ignores how-are-you (no pause boundary)",
+    main._normalize_hal_name("How are you doing?") == "How are you doing?",
+)
+check(
+    "normalize preserves already-correct HAL",
+    main._normalize_hal_name("HAL, what's our status?") == "HAL, what's our status?",
+)
+
+# --- farewell (transferred from hal) ---------------------------------------------
+
+import farewell  # noqa: E402
+
+for _said in ("That'll be all, HAL.", "Hey HAL, goodbye.", "That's all, how.",
+              "We're done for tonight.", "Thank you HAL, that is all.", "Dismissed."):
+    check(f"farewell fires on {_said!r}", farewell.is_farewell(_said))
+# A false positive destroys history; a false negative costs one repeat. These
+# are the shapes that must never fire.
+for _said in ("that's all the power we have left", "How do you say goodbye in French?",
+              "Don't say goodbye.", "What does 'that will be all' mean?",
+              "Tell me about the end of the mission.", "I'm done with the first task, now scan."):
+    check(f"farewell ignores {_said!r}", not farewell.is_farewell(_said))
+
+# --- termux voice loop (transferred from hal) ------------------------------------
+
+import termux_voice  # noqa: E402
+
+check("termux gate requires attention by default", termux_voice.WAKE_REQUIRE_ATTENTION)
+check("termux gate wakes on hey-hal", termux_voice._heard_wake_word("hey HAL, status report"))
+# The measured base.en homophones — "HAL, open the pod bay doors, HAL... hey HAL"
+# came back as "How? Open the pod bay doors, huh? Hey, how?" on the target phone.
+check("termux gate wakes on hey-how", termux_voice._heard_wake_word("Hey, how? Drive forward."))
+check("termux gate wakes on hi-huh", termux_voice._heard_wake_word("Hi huh, run diagnostics"))
+check("termux gate ignores ambient how", not termux_voice._heard_wake_word("how are you"))
+check("termux gate ignores a bare address",
+      not termux_voice._heard_wake_word("open the pod bay doors, HAL"))
+check("termux gate ignores unrelated speech",
+      not termux_voice._heard_wake_word("I don't know how we shall halt it"))
+check("empty wake word disables the gate", termux_voice._heard_wake_word("anything", ""))
+check("a non-hal wake word is matched literally only",
+      termux_voice._heard_wake_word("hey computer, status", "computer")
+      and not termux_voice._heard_wake_word("hey how, status", "computer"))
+check("silence gate default is a real dBFS threshold", termux_voice.SILENCE_PEAK_DBFS < 0)
+check("playback waits past the clip", termux_voice.PLAYBACK_SETTLE_SECONDS > 0)
+check("recorder is given time to finalise", termux_voice.RECORD_FINALISE_SECONDS > 0)
+
+# --- whisper.cpp STT backend (transferred from hal) ------------------------------
+
+import termux_whisper_cpp  # noqa: E402
+
+try:
+    termux_whisper_cpp.WhisperCppModel("/nonexistent/ggml-base.en.bin")
+    _missing_model_raised = False
+except termux_whisper_cpp.WhisperCppError:
+    _missing_model_raised = True
+check("whisper.cpp rejects a missing model file", _missing_model_raised)
+check(
+    "whisper.cpp mimics faster-whisper's device attribute",
+    termux_whisper_cpp._DeviceInfo.device == "cpu",
+)
+check(
+    "STT auto-detection is by binary presence, not a platform flag",
+    not os.path.isfile(main.WHISPER_CPP_BIN) or main.STT is not None or main.SKIP_MODELS,
+)
+check("transcribe degrades to empty when STT is unavailable",
+      main.STT is not None or main.transcribe(b"") == "")
+check("stt_device reports n/a when STT is unavailable",
+      main.STT is not None or main._stt_device() == "n/a")
+
+# --- _wake_word_required ---------------------------------------------------------
+
 check(
     "wake mode gates ambient duplex speech",
     main._wake_word_required(
@@ -1364,9 +1487,9 @@ check("Sec-Fetch-Site: cross-site blocked regardless of Origin",
       not main._origin_allowed("http://127.0.0.1:8000", "cross-site"))
 check("opaque origin blocked (sandboxed iframe / data: URL)",
       not main._origin_allowed("null", None))
-# curl, bin/hal and smoke.sh send no Origin; a browser always does on unsafe
+# curl, bin/hermes-hal and smoke.sh send no Origin; a browser always does on unsafe
 # methods, so absence means no browser is being used as a confused deputy.
-check("originless client still allowed (curl, bin/hal, smoke.sh)",
+check("originless client still allowed (curl, bin/hermes-hal, smoke.sh)",
       main._origin_allowed(None, None))
 
 _saved_hosts = list(main.ALLOWED_HOSTS)

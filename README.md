@@ -1,9 +1,22 @@
-# HAL 9000 — voice frontend for Hermes Agent
+# Hermes Hal — voice frontend for Hermes Agent
 
-Push-to-talk web interface that makes HAL 9000 the face (and voice) of
+`./run.sh` now opens a lightweight voice page by default: text entry, recorded
+messages, reply playback, connection state and tool approvals. It loads no Three.js,
+visual effects, remote fonts or animation loop. `/lite` always opens this page;
+`/bridge` opens the existing graphical interface described below. Set `HAL_UI=bridge`
+to restore the graphical launcher default. The light page records up to 60 seconds
+per message and needs localhost or HTTPS for microphone access. Stop playback only
+silences browser audio; it does not cancel an agent or stop motors.
+
+The Python voice stack is still required; Android deployment and Luna subscription
+inference have not been verified by this UI change. Technology may be copied from
+the separate `hal` repository into this project, never in reverse, with no runtime
+coupling. See [the transfer policy and ledger](docs/technology-transfer.md).
+
+Push-to-talk web interface that makes Hermes Hal the face (and voice) of
 [Hermes Agent CLI](https://github.com/NousResearch/Hermes-Agent). Hold the
 red eye, speak, release — Hermes does the thinking (with full tool access),
-and the reply comes back in HAL's voice.
+and the reply comes back in Hermes Hal's voice.
 
 On screens wider than 760px the eye sits in a **Bridge** layout — mission log,
 telemetry bar, live waveform, mission cards, always-visible input — with an
@@ -21,7 +34,7 @@ to run fully local with zero cloud API keys:
 |-------|-------------------------|----------------------------------------------------|
 | STT   | Groq Whisper API        | faster-whisper, local (`base.en` by default)       |
 | Brain | Claude API              | **Hermes Agent CLI** — named sessions, tools, skills |
-| TTS   | Piper (plain)           | [campwill/HAL-9000-Piper-TTS](https://huggingface.co/campwill/HAL-9000-Piper-TTS) with Hermes' HAL text normalization and optional ffmpeg mastering |
+| TTS   | Piper (plain)           | [campwill/HAL-9000-Piper-TTS](https://huggingface.co/campwill/HAL-9000-Piper-TTS) with Hermes Hal text normalization and optional ffmpeg mastering |
 
 ## How it works
 
@@ -46,14 +59,14 @@ The bridge speaks ACP through the official `agent-client-protocol` library
 -per-turn bridge if ACP ever misbehaves.
 
 - **Persona** lives in [AGENTS.md](AGENTS.md) — Hermes auto-injects it because the
-  agent runs with this directory as cwd. Edit it to change how HAL speaks or
+  agent runs with this directory as cwd. Edit it to change how Hermes Hal speaks or
   what he calls you. No global Hermes config is touched.
 - **Sessions**: each browser session continues one Hermes session
   (`hermes sessions list --source hal-web`). Clear the `hal_session` cookie
   for a fresh one. Hermes' builtin memory still carries facts across sessions.
 - **Tools**: it's real Hermes — "Hal, what's in my downloads folder?" works.
   Dangerous-command permission requests follow `HAL_PERMISSION_MODE`:
-  - `deny` (default) — every request is rejected and HAL tells you the
+  - `deny` (default) — every request is rejected and Hermes Hal tells you the
     action was blocked.
   - `ask` — HAL asks ("Dave, I need your permission: …") and waits up to
     `HAL_PERMISSION_TIMEOUT` seconds. Answer by voice or text ("yes" /
@@ -74,12 +87,12 @@ Runs inside the Hermes venv — no separate environment, no `.env`, no API keys.
 First start downloads the STT model (~75 MB) to the Hugging Face cache.
 `run.sh` is plain bash and works on macOS and Linux.
 
-Or just type `hal` anywhere — [bin/hal](bin/hal) starts the server if
+Or just type `hermes-hal` anywhere — [bin/hermes-hal](bin/hermes-hal) starts the server if
 needed, waits for it to become healthy, and opens the eye in your browser
-(`hal --no-open` skips the tab). Install it once with:
+(`hermes-hal --no-open` skips the tab). Install it once with:
 
 ```
-ln -s "$(pwd)/bin/hal" ~/.local/bin/hal
+ln -s "$(pwd)/bin/hermes-hal" ~/.local/bin/hermes-hal
 ```
 
 ## Tests
@@ -164,8 +177,47 @@ fallback when the socket or streaming audio support is unavailable.
 | `HAL_STT_PROMPT` | *(empty)* | optional whisper bias prompt (helps it spell "HAL"/"Hermes"; can hallucinate on silence) |
 | `HAL_STT_BEAM` | `5` | whisper beam size; `1` (greedy) is ~2x faster with slightly lower accuracy |
 | `HAL_MAX_UPLOAD_MB` | `25` | reject recordings larger than this (413) |
+| `HAL_WAKE_REQUIRE_ATTENTION` | `1` | require an attention word ("hey HAL"), not the bare name; `0` takes the bare name back |
+| `HAL_WHISPER_CPP_BIN` | `~/whisper.cpp/build/bin/whisper-cli` | whisper.cpp STT backend; used automatically when the binary and model both exist |
+| `HAL_WHISPER_CPP_MODEL` | `~/whisper.cpp/models/ggml-<model>.bin` | ggml model for the above |
+| `HAL_FFMPEG_BIN` | `ffmpeg` | ffmpeg used for audio normalization and level probing |
+| `HAL_TERMUX_LISTEN` | `0` | run the on-device listen/speak loop (phone mic + speaker, no browser) |
+| `HAL_TERMUX_STT_BACKEND` | `whispercpp` | `whispercpp` or `android` (`termux-speech-to-text`) |
+| `HAL_TERMUX_CLIP_SECONDS` | `6` | length of one bounded capture in that loop |
+| `HAL_TERMUX_SILENCE_DBFS` | `-45` | peak level below which a clip is never decoded |
+| `HAL_WAKE_WORD` | `hal` | wake word for the on-device loop; empty disables the gate |
 | `HAL_COOKIE_MAX_AGE_DAYS` | `180` | lifetime of the `hal_session` cookie |
 | `HAL_SYSTEMS_TTL` | `20` | seconds to cache the `/api/systems` CLI surfaces |
+
+## Hands-free on the phone
+
+`HAL_TERMUX_LISTEN=1` starts an on-device listen/speak loop (`termux_voice.py`)
+that uses the phone's own microphone and speaker and needs no browser at all.
+It records a bounded clip, drops it if the peak is below the silence gate,
+transcribes it through whisper.cpp, requires the wake phrase **"hey HAL"**, runs
+the turn, and speaks the reply. **"That'll be all, HAL"** ends the conversation
+and clears the session (`farewell.py`).
+
+The wake phrase needs the attention word by design. A bare name cannot be made
+safe against a television — a film playing in the room produced a textbook
+address that HAL answered. `HAL_WAKE_REQUIRE_ATTENTION=0` takes the bare name
+back if you want it. The same knob governs the browser duplex gate, so the two
+cannot drift apart.
+
+The loop is sequential: nothing is recording while a turn runs. That costs only
+responsiveness today, because this deployment exposes no robot controls. Read
+`termux_voice.py`'s docstring before adding any.
+
+Setting the phone up is `bin/termux-setup`, with the reasoning in
+[docs/pixel-deployment.md](docs/pixel-deployment.md). Do not `pip install -r
+requirements.txt` there — it yields an environment that imports cleanly and
+does not work.
+
+On Termux, STT runs on whisper.cpp — `faster-whisper`'s ctranslate2 build there
+can never load a Whisper model. It is selected automatically when the binary and
+model are both present, so nothing changes on a Mac. If no STT backend loads at
+all, audio endpoints return no-speech and `/api/health` reports `stt_device:
+n/a`; every text surface keeps working.
 
 ## Endpoints
 
@@ -415,7 +467,7 @@ rest of the machine, and it is worth knowing exactly what each one covers:
    attacker can't read the reply, but the turn still runs. State-changing
    methods (`POST`/`PUT`/`PATCH`/`DELETE`) and the WebSocket handshake are
    now rejected with 403 unless `Origin` is absent (non-browser clients like
-   curl and `bin/hal`) or its host is in the allowlist. `Origin: null` —
+   curl and `bin/hermes-hal`) or its host is in the allowlist. `Origin: null` —
    a sandboxed iframe or `file://` page — is rejected.
 
 Agent-written files under `data/viewscreen/` are served with

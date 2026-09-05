@@ -1,13 +1,14 @@
-"""HAL 9000 voice frontend for Hermes Agent CLI.
+"""Hermes Hal voice frontend for Hermes Agent CLI.
 
 Fork of https://huggingface.co/spaces/piclez/hal rewired to run fully local:
   - STT:   faster-whisper (bundled with the Hermes venv) instead of Groq
   - Brain: Hermes Agent CLI (named sessions, full tool access) instead of Claude
-  - TTS:   campwill/HAL-9000-Piper-TTS with Hermes' HAL text normalization
+  - TTS:   campwill/HAL-9000-Piper-TTS with Hermes Hal text normalization
            and optional ffmpeg mastering
 
 Run with the Hermes venv:  ./run.sh   (or see README.md)
 """
+import ast
 import importlib.util
 import io
 import json
@@ -27,6 +28,10 @@ from urllib.parse import quote, urlsplit
 
 import asyncio
 from collections import deque
+
+# Keep ONNX Runtime's telemetry identifier out of the repository and disable
+# upstream usage reporting before Piper or faster-whisper imports ONNX.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 
 import numpy as np
 
@@ -68,10 +73,31 @@ SAMPLE_RATE_STT = 16000
 # Skip loading the STT/TTS models — for tests of the pure-python parts only;
 # /api/talk and /api/say will not work.
 SKIP_MODELS = os.environ.get("HAL_SKIP_MODELS", "") == "1"
-# Optional bias prompt for whisper, e.g. "Dave speaking with HAL 9000." —
+# Optional bias prompt for whisper, e.g. "Dave speaking with Hermes Hal." —
 # helps it spell HAL/Hermes correctly. Off by default: a bias prompt can make
 # whisper hallucinate text on near-silent recordings.
 STT_PROMPT = os.environ.get("HAL_STT_PROMPT", "").strip() or None
+# whisper.cpp is the Termux/Pixel STT backend (faster-whisper's ctranslate2
+# has no usable Whisper bindings there — see termux_whisper_cpp.py).
+# Auto-detected by presence rather than by a platform flag someone has to keep
+# in sync by hand. Absent on the Mac unless someone separately builds it there
+# too, so this changes nothing about the existing faster-whisper path.
+WHISPER_CPP_BIN = os.path.expanduser(
+    os.environ.get("HAL_WHISPER_CPP_BIN", "~/whisper.cpp/build/bin/whisper-cli")
+)
+WHISPER_CPP_MODEL = os.path.expanduser(
+    os.environ.get("HAL_WHISPER_CPP_MODEL", f"~/whisper.cpp/models/ggml-{STT_MODEL_NAME}.bin")
+)
+# One setting for "where ffmpeg is" across this app, not two to keep in sync.
+FFMPEG_BIN = os.environ.get("HAL_FFMPEG_BIN", "ffmpeg")
+# On-device listen/speak loop for the Termux/Pixel deployment (termux_voice.py)
+# — the phone's own mic/speaker, entirely separate from the browser-audio
+# endpoints the desktop uses. See that module for why it can't share them.
+TERMUX_LISTEN = os.environ.get("HAL_TERMUX_LISTEN", "0").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 # History files hold messages, not turns — one spoken turn appends two.
 MAX_HISTORY_MESSAGES = 40
 MAX_SPOKEN_CHARS = 1500
@@ -157,6 +183,74 @@ def _load_hal_tts_module():
 
 _hal_tts = _load_hal_tts_module() if _HAL_TTS_SCRIPT.exists() else None
 
+# Import the full Hermes slash-command registry so HAL's /api/commands catalog
+# can expose every command the CLI supports — the ACP adapter only advertises
+# ~9 of them.  cli_only and gateway_only commands are excluded: they need a
+# terminal or a messaging platform that HAL's voice/web frontend doesn't have.
+_HERMES_COMMANDS_PY = Path(
+    os.path.expanduser(
+        os.environ.get(
+            "HAL_HERMES_COMMANDS",
+            "~/.hermes/hermes-agent/hermes_cli/commands.py",
+        )
+    )
+)
+
+
+def _load_hermes_commands() -> tuple[dict[str, str | None], ...]:
+    """Parse COMMAND_REGISTRY from Hermes via AST and return HAL-catalog dicts.
+
+    This avoids importlib which fails on internal Hermes dependencies.
+    """
+    try:
+        with open(_HERMES_COMMANDS_PY, "r") as f:
+            tree = ast.parse(f.read(), filename=str(_HERMES_COMMANDS_PY))
+    except Exception as exc:
+        print(f"[commands] could not read Hermes command registry: {exc!r}")
+        return ()
+
+    commands: list[dict[str, str | None]] = []
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "COMMAND_REGISTRY":
+            if not isinstance(node.value, (ast.List, ast.Tuple)):
+                continue
+            for item in node.value.elts:
+                if not (isinstance(item, ast.Call) and getattr(item.func, "id", "") == "CommandDef"):
+                    continue
+                args = item.args
+                kwargs = {kw.arg: kw.value for kw in item.keywords}
+
+                cli_only = False
+                gateway_only = False
+
+                if "cli_only" in kwargs and isinstance(kwargs["cli_only"], ast.Constant):
+                    cli_only = kwargs["cli_only"].value
+                if "gateway_only" in kwargs and isinstance(kwargs["gateway_only"], ast.Constant):
+                    gateway_only = kwargs["gateway_only"].value
+
+                if cli_only or gateway_only:
+                    continue
+
+                name = args[0].value if len(args) > 0 and isinstance(args[0], ast.Constant) else ""
+                desc = args[1].value if len(args) > 1 and isinstance(args[1], ast.Constant) else ""
+
+                hint = ""
+                if "args_hint" in kwargs and isinstance(kwargs["args_hint"], ast.Constant):
+                    hint = kwargs["args_hint"].value
+
+                commands.append({
+                    "name": name,
+                    "description": desc,
+                    "input_hint": str(hint).strip() if hint else None,
+                    "source": "hermes",
+                })
+            break
+
+    return tuple(commands)
+
+
+_HERMES_FULL_COMMANDS = _load_hermes_commands() if _HERMES_COMMANDS_PY.exists() else ()
+
 SYN_CONFIG = SynthesisConfig(
     length_scale=float(os.environ.get("HAL_LENGTH_SCALE", "1.08")),
     noise_scale=float(os.environ.get("HAL_NOISE_SCALE", "0.6")),
@@ -174,7 +268,33 @@ def _load_stt():
     That is strictly worse than staying on CPU, so probe once at boot with a
     throwaway decode (the lazy generator must be drained — that is where CUDA
     actually fails) and fall back rather than fail requests forever.
+
+    whisper.cpp, when present, is tried first and is not a device to fall back
+    *from* on failure the way CUDA is below — it's the more reliable backend on
+    the one platform it's actually needed (see termux_whisper_cpp.py), so a
+    broken whisper.cpp here degrades to STT = None via this function's caller
+    rather than masking a real problem by silently retrying faster-whisper,
+    which is known broken on that same platform.
     """
+    if (
+        os.path.isfile(WHISPER_CPP_BIN)
+        and os.access(WHISPER_CPP_BIN, os.X_OK)
+        and os.path.isfile(WHISPER_CPP_MODEL)
+    ):
+        from termux_whisper_cpp import WhisperCppModel
+
+        model = WhisperCppModel(
+            WHISPER_CPP_MODEL,
+            binary_path=WHISPER_CPP_BIN,
+            ffmpeg_bin=FFMPEG_BIN,
+            threads=STT_CPU_THREADS or 4,
+        )
+        segments, _info = model.transcribe(
+            np.zeros(SAMPLE_RATE_STT, dtype=np.float32), language="en", beam_size=1
+        )
+        list(segments)
+        return model
+
     def build(device: str, compute_type: str):
         model = WhisperModel(
             STT_MODEL_NAME,
@@ -205,8 +325,17 @@ else:
     VOICE = PiperVoice.load(str(VOICE_PATH))
     print("HAL voice loaded")
     print(f"Loading STT model ({STT_MODEL_NAME}, device={STT_DEVICE}, compute={STT_COMPUTE_TYPE})...")
-    STT = _load_stt()
-    print(f"STT model loaded (device={STT.model.device})")
+    try:
+        STT = _load_stt()
+        print(f"STT model loaded (device={STT.model.device})")
+    except Exception as exc:
+        # The browser-audio endpoints (/api/talk, the WS duplex path) need a
+        # working STT, but nothing else in this app does — every text surface
+        # and the tool-permission flow work fine without it. A platform where
+        # faster-whisper's engine is unavailable should degrade, not take the
+        # whole app down. /api/health reports stt_device "n/a".
+        print(f"[stt] model unavailable, STT disabled: {exc!r}")
+        STT = None
 
 SAMPLE_RATE = VOICE.config.sample_rate if VOICE is not None else 22050
 
@@ -262,12 +391,24 @@ async def lifespan(_app: FastAPI):
     await hermes_bridge.startup()
     mission_control.manager.start_scheduler()
     viewscreen_task = asyncio.create_task(_viewscreen_watch(), name="viewscreen-watch")
+    termux_listen_task = None
+    if TERMUX_LISTEN:
+        import termux_voice
+
+        termux_listen_task = asyncio.create_task(
+            termux_voice.listen_loop(run_turn, transcribe, clear_session),
+            name="termux-listen",
+        )
     if BOOT_RITUAL:
         _pending_announcements.append(_boot_ritual_line())
     yield
     viewscreen_task.cancel()
     with suppress(asyncio.CancelledError):
         await viewscreen_task
+    if termux_listen_task is not None:
+        termux_listen_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await termux_listen_task
     await mission_control.manager.stop_scheduler()
     await hermes_bridge.shutdown()
 
@@ -303,7 +444,7 @@ def _origin_allowed(origin: str | None, fetch_site: str | None) -> bool:
 
     A browser always sends Origin on unsafe methods and on WebSocket
     handshakes, so absence means no browser is being used as a confused deputy
-    — curl, bin/hal, and the smoke driver keep working untouched.
+    — curl, bin/hermes-hal, and the smoke driver keep working untouched.
     """
     if fetch_site == "cross-site":
         return False
@@ -480,9 +621,10 @@ def _log_session_event(session_id: str, payload: dict) -> None:
 
 
 def _stt_device() -> str:
-    """The device faster-whisper actually resolved "auto" to (cuda/cpu) —
-    for /api/status and /api/systems, so a GPU that silently isn't being
-    used shows up without reading server logs."""
+    """The device STT actually resolved to — "cpu"/"cuda" for faster-whisper's
+    "auto", always "cpu" for whisper.cpp (see termux_whisper_cpp.py) — for
+    /api/status and /api/systems, so a GPU that silently isn't being used
+    shows up without reading server logs. "n/a" when STT failed to load."""
     return STT.model.device if STT is not None else "n/a"
 
 
@@ -491,6 +633,12 @@ def transcribe(
     beam_size: int | None = None,
     wait_for_lock: bool = True,
 ) -> str:
+    if STT is None:
+        # _load_stt deliberately degrades to None rather than taking the whole
+        # app down (see its docstring). Returning "" routes into the callers'
+        # existing no-speech path instead of raising AttributeError and turning
+        # every /api/talk into a 500.
+        return ""
     if not _STT_LOCK.acquire(blocking=wait_for_lock):
         return ""
     try:
@@ -502,7 +650,8 @@ def transcribe(
             beam_size=beam_size if beam_size is not None else STT_BEAM_SIZE,
         )
         # segments is lazy — decoding happens here, so join inside the lock.
-        return " ".join(seg.text.strip() for seg in segments).strip()
+        text = " ".join(seg.text.strip() for seg in segments).strip()
+        return _normalize_hal_name(text)
     finally:
         _STT_LOCK.release()
 
@@ -881,10 +1030,58 @@ _PERM_DENY_RE = re.compile(
 # base.en commonly renders the spoken name "HAL" as "Hell" or "Hall"
 # (confirmed on the local voice path). Accept those exact homophones only;
 # broader guesses such as "how" would wake on ordinary ambient questions.
+# The attention word is required by default, for the reason termux_voice.py
+# records from a live failure on the phone: a bare name cannot be made safe
+# against a television. A film playing in the room produced "HAL, the real
+# value of a conflict, the true value, is in the dead." — a textbook address,
+# at the start of the utterance, indistinguishable from a real one by any text
+# rule, and HAL answered it. Two ordered tokens are vanishingly rare in ambient
+# speech; a common single word is not. Browser duplex mode listens to the same
+# room, so it gets the same rule and the same escape hatch: one knob for both
+# gates, because two would drift.
+#
+# The name variants stop at hal/hall/hell deliberately. The looser homophones
+# whisper produces ("how", "hull", "howl") are safe for termux_voice.py's
+# gate, which requires the attention word unconditionally, but here they would
+# also apply with HAL_WAKE_REQUIRE_ATTENTION=0 — where a bare "How are you
+# doing?" would wake the gate on every ordinary question in the room.
+_WAKE_ATTENTION = "(?:hey|hi|ok|okay|hello)"
+_WAKE_NAME = "(?:hal|hall|hell)"
+WAKE_REQUIRE_ATTENTION = os.environ.get(
+    "HAL_WAKE_REQUIRE_ATTENTION", "1"
+).strip().lower() not in {"0", "false", "no"}
 _WAKE_RE = re.compile(
-    r"^\s*(?:hey|ok|okay)?[,\s]*(?:hal|hall|hell)\b[,.!?:]*\s*(.*)$",
+    (
+        rf"^\s*{_WAKE_ATTENTION}[,\s]+{_WAKE_NAME}\b[,.!?:]*\s*(.*)$"
+        if WAKE_REQUIRE_ATTENTION
+        else rf"^\s*{_WAKE_ATTENTION}?[,\s]*{_WAKE_NAME}\b[,.!?:]*\s*(.*)$"
+    ),
     re.I | re.S,
 )
+
+# Post-STT correction: Whisper base.en renders the spoken name "HAL" as a
+# handful of short monosyllables.  Replacing them unconditionally would mangle
+# real words ("how are you?"), so the pattern fires only in *address position*
+# — start of utterance (with an optional "hey"/"ok" prefix) followed by
+# punctuation (comma, period, etc.).  Whisper reliably inserts a comma after
+# a vocative address, so requiring punctuation is the right boundary.
+#
+# This is what lets _WAKE_RE keep its name list at hal/hall/hell: the looser
+# homophones are repaired here, in address position only, before the gate ever
+# sees them. "Hey how, run diagnostics" becomes "Hey HAL, run diagnostics" and
+# wakes; "How are you doing?" has no punctuation boundary, is left alone, and
+# does not.
+_HAL_HOMOPHONES_RE = re.compile(
+    r"^(\s*(?:hey|ok|okay)?[,\s]*)"          # optional greeting prefix
+    r"(?:hall|hell|howl|how|howe|hull)\b"     # misheard name
+    r"([,.!?:])",                             # punctuation boundary (no \s)
+    re.I,
+)
+
+
+def _normalize_hal_name(text: str) -> str:
+    """Replace known STT mishearings of 'HAL' in address position."""
+    return _HAL_HOMOPHONES_RE.sub(r"\1HAL\2", text)
 
 
 def _wake_word_required(
@@ -1417,9 +1614,14 @@ def _stream_turn_response(
 
 
 @app.get("/")
+@app.get("/lite")
+@app.get("/bridge")
 def index(request: Request):
     session_id, new_session = _session_from_request(request)
-    resp = FileResponse(str(APP_DIR / "static" / "index.html"))
+    lite = request.url.path == "/lite" or (
+        request.url.path == "/" and os.environ.get("HAL_UI", "bridge") == "lite"
+    )
+    resp = FileResponse(str(APP_DIR / "static" / ("lite.html" if lite else "index.html")))
     if new_session:
         _set_session_cookie(resp, session_id)
     return resp
@@ -1484,19 +1686,53 @@ def status(request: Request):
 
 @app.get("/api/commands")
 async def command_catalog(request: Request):
-    """Live composer catalog: HAL-native commands plus Hermes ACP metadata."""
+    """Live composer catalog: HAL-native + full Hermes CLI commands.
+
+    Three sources, merged by name:
+    1. The static Hermes command registry (_HERMES_FULL_COMMANDS) — the
+       complete set of non-CLI-only, non-gateway-only commands.  This is the
+       baseline that gives HAL full access to every Hermes slash command.
+    2. Live ACP commands — a small subset that arrives over the ACP session.
+       These override the static entry for the same name (they may carry
+       session-specific metadata).
+    3. HAL-native commands — /mission, /ask, /chess, /remember, /resign.
+       These are listed alongside Hermes commands (not shadowing them).
+    """
     session_id, new_session = _session_from_request(request)
-    hermes_commands: list[dict[str, str | None]] = []
+    acp_commands: list[dict[str, str | None]] = []
     hermes_error = None
     try:
-        hermes_commands = await hermes_bridge.list_slash_commands(session_id)
+        acp_commands = await hermes_bridge.list_slash_commands(session_id)
     except Exception as exc:
         hermes_error = "Hermes command channel is unavailable."
         print(f"[commands] catalog unavailable: {exc!r}")
-    if not hermes_commands and hermes_error is None:
+    if not acp_commands and not _HERMES_FULL_COMMANDS and hermes_error is None:
         hermes_error = "Hermes command metadata is unavailable."
 
+    # 1. Static registry as the baseline — every non-CLI-only command.
     by_name: dict[str, dict[str, str | None]] = {}
+    for command in _HERMES_FULL_COMMANDS:
+        name = str(command.get("name") or "").strip().lstrip("/").lower()
+        if not name:
+            continue
+        by_name[name] = {
+            "name": name,
+            "description": str(command.get("description") or "").strip(),
+            "input_hint": command.get("input_hint"),
+            "source": "hermes",
+        }
+    # 2. ACP live commands override the static entry (richer metadata).
+    for command in acp_commands:
+        name = str(command.get("name") or "").strip().lstrip("/").lower()
+        if not name:
+            continue
+        by_name[name] = {
+            "name": name,
+            "description": str(command.get("description") or "").strip(),
+            "input_hint": command.get("input_hint"),
+            "source": "hermes",
+        }
+    # 3. HAL-native commands are added alongside, not shadowing.
     for command in HAL_SLASH_COMMANDS:
         name = str(command.get("name") or "").strip().lstrip("/").lower()
         if not name:
@@ -1507,16 +1743,6 @@ async def command_catalog(request: Request):
             "input_hint": command.get("input_hint"),
             "source": "hal",
         }
-    for command in hermes_commands:
-        name = str(command.get("name") or "").strip().lstrip("/").lower()
-        if not name or name in by_name:
-            continue
-        by_name[name] = {
-            "name": name,
-            "description": str(command.get("description") or "").strip(),
-            "input_hint": command.get("input_hint"),
-            "source": "hermes",
-        }
     commands = sorted(
         by_name.values(),
         key=lambda command: (command["source"] != "hermes", command["name"]),
@@ -1524,7 +1750,7 @@ async def command_catalog(request: Request):
 
     resp = JSONResponse({
         "commands": commands,
-        "hermes_available": bool(hermes_commands),
+        "hermes_available": bool(acp_commands) or bool(_HERMES_FULL_COMMANDS),
         "hermes_error": hermes_error,
     })
     if new_session:
@@ -1843,6 +2069,17 @@ async def proposal_decision(request_id: str, body: ProposalDecision, request: Re
     if approve:
         _speak_if_connected(session_id, f"Very well, Dave. Mission underway: {proposal['title']}.")
     return JSONResponse({"ok": True})
+
+
+def clear_session(session_id: str) -> None:
+    """Forget one session's agent mapping and transcript — the same work
+    /api/session/reset does, minus the cookie, so the on-device voice loop can
+    end a conversation without an HTTP client. See farewell.py."""
+    hermes_bridge.drop_session(session_id)
+    session_file(session_id).unlink(missing_ok=True)
+    events_file(session_id).unlink(missing_ok=True)
+    mission_control.manager.drain_notes(session_id)
+    chess_control.manager.drop(session_id)
 
 
 @app.post("/api/session/reset")

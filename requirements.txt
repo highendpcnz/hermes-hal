@@ -1,6 +1,11 @@
 # This app is designed to run inside the Hermes Agent venv
 # (~/hermes-agent/.venv), which already ships every dependency below.
 # Install these only if you want a standalone environment instead.
+#
+# NOT FOR TERMUX/ANDROID. Installing this file there produces an environment
+# that imports cleanly and does not work: piper-tts builds with no C++ bridge,
+# and faster-whisper can never load a model. Run `bin/termux-setup` instead and
+# read docs/pixel-deployment.md.
 fastapi>=0.115
 uvicorn[standard]>=0.32
 python-multipart>=0.0.9
@@ -14,3 +19,5 @@ agent-client-protocol==0.9.0
 # openai>=1.40
 # The Crew Manifest (speaker_id.py voiceprints) needs — see README:
 # sherpa-onnx>=1.13
+# (sherpa-onnx does not install on Termux at all — its CMake rejects Android
+#  by name — so the Crew Manifest is desktop-only. See docs/pixel-deployment.md.)
