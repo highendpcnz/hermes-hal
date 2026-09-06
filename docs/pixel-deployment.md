@@ -412,6 +412,69 @@ it has used before, check `find ~/.hermes/skills -name SKILL.md -newermt
 "<session start>"` for a skill background_review wrote mid-session before
 concluding it is a model or config problem.
 
+## Motion verified on the chassis, wheels lifted, 2026-09-06
+
+First motion ever commanded from this repo. Scripts under `data/bench/`
+(gitignored), run directly against the hardware layer rather than through the
+bridge, because `read_spatial_sensors` discards the encoder angles and those
+are the only objective evidence a wheel turned -- with the chassis lifted,
+ultrasonic and yaw do not change on a straight drive.
+
+**Motors turn, and the distance bound is real.**
+
+```
+ 5 cm ->  86.5 deg encoder travel (1.58s)
+20 cm -> 352.5 deg encoder travel (6.08s)
+ratio 20/5 = 4.08   (4.0 expected)
+```
+
+Within 2% of proportional, with timing scaling too. The firmware honours the
+commanded distance rather than running open-loop. Left and right encoders move
+with opposite signs and near-equal magnitude (mirrored mounts, driving straight).
+
+**A stop cannot interrupt a drive. This is now measured, not inferred.**
+
+Firing `emergency_stop` on a second transport 2.5 s into a 6 s drive:
+
+```
+encoder travel : 354.0 deg     (uninterrupted 20 cm was 352.5)
+drive thread   : Ch340UsbError: bulk_transfer(read) failed: No such device (-4)
+mid-drive stop : CyberPiTimeoutError
+```
+
+The wheels ran the full commanded distance. The stop shortened it by nothing
+measurable. `emergency_stop` with no drive in flight works fine, so the tool is
+not broken -- it simply cannot reach a chassis whose channel is already busy.
+
+**One documented detail is wrong for this platform.** The transferred code says
+two connections fail with "Resource busy". That is pyserial on a desktop. On
+the Android path `Ch340UsbTransport` wraps the same `TERMUX_USB_FD` integer, so
+**the second open succeeds silently**, both conversations interleave on one
+channel, and they corrupt each other. The in-flight drive loses its control
+channel entirely (`No such device`) and completes blind.
+
+The board survives this: USB stays enumerated, and telemetry reads normally
+afterwards without a re-claim. But between the collision and the end of the
+command there is no telemetry, no stop, and no way to intervene.
+
+So the safety property is exactly what the code comments claim, and for a
+sharper reason than "a stop might not arrive": **a bounded, self-terminating
+command is the only guarantee, because a mid-drive stop is not merely
+unreliable, it is unavailable, and attempting one destroys the channel you
+would need to observe the outcome.** Never write a command whose completion
+depends on being able to stop it. The 50 cm / 30% and 5 cm / 10% crawl bounds
+are the safety envelope, not a tuning preference.
+
+An earlier attempt fired the stop 0.4 s in and measured 0.0 deg of travel,
+which looked like a successful stop and was not: the collision landed during
+the drive's own setup conversation, so no motor ever started. Fire late enough
+to be sure the wheels are turning before reading anything into the result.
+
+Not yet tested: a stop issued from the *same* transport and process as a
+running drive (the bridge's real arrangement, where `run_motion` holds the
+transport for the duration), and any of this with the wheels down and the
+chassis loaded.
+
 ## What still has to be proven on the device
 
 1. **No motion has been commanded from this repo.** Sensors are verified
