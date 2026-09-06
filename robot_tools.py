@@ -180,6 +180,34 @@ def _env(value, key: str, default: str):
     return value if value is not None else os.environ.get(key, default)
 
 
+def camera_rotate(override=None) -> int:
+    """ffmpeg `transpose` value applied to a capture: 0 none, 1 90 clockwise,
+    2 90 counter-clockwise, 3 90 clockwise + flip.
+
+    **This is mounting-dependent and there is no correct constant.** The value
+    corrects however the phone happens to sit on the chassis, so it has to be
+    re-checked whenever the phone is remounted.
+
+    Default 0, verified on this mounting 2026-09-06 by capturing the same
+    scene at all four values and looking at them: 0 came out upright, floor at
+    the bottom. The transferred code defaulted to 2, which was tuned for a
+    different mounting and was *introducing* a 90-degree rotation rather than
+    correcting one -- and an earlier revision of this wrapper dropped the
+    override entirely, so there was no way to fix it without editing code.
+
+    A rotated frame is not a cosmetic problem. Every vision decision is made
+    from a caption of this image, so "the hazard is on the right" comes out
+    wrong when the frame is sideways -- caught by the operator, who could see
+    the power strip was on the left. Nothing steers on that yet, because crawl
+    only drives forward; it would matter the moment turning is added.
+
+    To re-check after a remount: capture at each value and look at the frames.
+    Do not infer it from the caption -- a caption of a sideways image reads
+    perfectly plausibly.
+    """
+    return int(_env(override, "HAL_CAMERA_ROTATE", "0"))
+
+
 def capture_frame_app_process(**overrides) -> tuple[bytes, int, int]:
     """The ultra-wide path. `termux-camera-photo` can only address logical
     cameras and always shoots at 1x, which pins it to the main lens; the
@@ -190,6 +218,7 @@ def capture_frame_app_process(**overrides) -> tuple[bytes, int, int]:
 
     return camera.capture_frame_app_process(
         zoom=_env(overrides.get("zoom"), "HAL_CAMERA_ZOOM", "widest"),
+        rotate=camera_rotate(overrides.get("rotate")),
         jar_path=_env(overrides.get("jar_path"), "HAL_CAPTURE_JAR", camera.DEFAULT_CAPTURE_JAR),
         app_process_bin=_env(
             overrides.get("app_process_bin"), "HAL_APP_PROCESS_BIN", camera.DEFAULT_APP_PROCESS
@@ -198,11 +227,11 @@ def capture_frame_app_process(**overrides) -> tuple[bytes, int, int]:
     )
 
 
-def capture_frame_termux(**_overrides) -> tuple[bytes, int, int]:
+def capture_frame_termux(**overrides) -> tuple[bytes, int, int]:
     """The main-lens path: Termux:API plus ffmpeg. Hardware-verified."""
     from robot import camera
 
-    return camera.capture_frame_termux()
+    return camera.capture_frame_termux(rotate=camera_rotate(overrides.get("rotate")))
 
 
 def capture_frame_ffmpeg(**_overrides) -> tuple[bytes, int, int]:
