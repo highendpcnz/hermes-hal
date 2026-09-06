@@ -176,6 +176,26 @@ looked for `~/hermes-agent/.venv/bin`, but upstream's Termux path creates
 `venv` without the dot, so `hermes-acp` was present and invisible. Both names
 are searched now.
 
+## Getting HAL's voice out of the phone, not the laptop
+
+`/lite` and `/bridge` stream TTS as PCM to the *browser*, so a bridge driven
+remotely — the normal arrangement here, laptop browser through an SSH forward to
+the phone's port 8000 — speaks out of the laptop. The robot stays silent, which
+looks like broken audio and is not.
+
+`HAL_SPEAK_LOCAL=1` makes the host speak its replies through its own speaker as
+well, reusing the PCM already synthesized for the socket rather than running
+Piper twice. It hooks `_ws_send_tts`, so it covers every WebSocket reply
+including per-sentence commentary, and plays *after* the socket has its audio so
+the browser never waits on the phone. Playback is `termux_voice.speak()` —
+`termux-media-player`, which needs Termux:API installed. Verified 2026-09-06:
+one four-line reply produced two tracks on the phone's speaker.
+
+Leave it off on a desktop, where it would double every reply. It is independent
+of `HAL_TERMUX_LISTEN`: that runs the phone's *mic* loop as well, and its module
+docstring forbids using it while motion is enabled (the loop is sequential, so
+nothing is listening for a stop word during a drive).
+
 ## Robot tools
 
 `robot/` and `robot_tools.py` are in place, reached by Hermes Agent through an

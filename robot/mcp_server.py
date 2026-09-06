@@ -181,7 +181,7 @@ def crawl_step(
 ) -> dict:
     """Record your assessment of the latest capture and, if it is "clear" with
     confidence of at least 0.9, drive one short segment forward. assessment is
-    "clear", "blocked" or "unknown"; distance_cm is 1..5; speed_pct is 1..10.
+    "clear", "blocked" or "unknown"; distance_cm is 1..15; speed_pct is 1..10.
     The budget is spent whether or not the motion succeeds, so do not retry a
     segment whose outcome you are unsure of."""
     return _post("/internal/robot/crawl/step", {

@@ -108,6 +108,16 @@ TERMUX_LISTEN = os.environ.get("HAL_TERMUX_LISTEN", "0").strip().lower() not in 
     "false",
     "no",
 }
+# The browser paths play TTS wherever the *browser* is, so driving this bridge
+# remotely puts the robot's voice on the operator's laptop instead of on the
+# robot. Set this and the host speaks its replies through its own speaker too,
+# which is what you want when the machine running the bridge is the one with a
+# face. Off by default: on a desktop it would double every reply.
+SPEAK_LOCAL = os.environ.get("HAL_SPEAK_LOCAL", "0").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 # History files hold messages, not turns — one spoken turn appends two.
 MAX_HISTORY_MESSAGES = 40
 MAX_SPOKEN_CHARS = 1500
@@ -2582,6 +2592,38 @@ def _ws_frame(kind: str, turn_id: int | str | None = None, **payload) -> dict:
     return frame
 
 
+def _pcm_to_wav(pcm: bytes) -> bytes:
+    """Wrap raw mono 16-bit PCM in a WAV container, for players that need one."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(SAMPLE_RATE)
+        wav_file.writeframes(pcm)
+    return buf.getvalue()
+
+
+_LOCAL_SPEECH_LOCK = asyncio.Lock()
+
+
+async def _speak_on_device(pcm: bytes) -> None:
+    """Play a reply through this host's own speaker, for HAL_SPEAK_LOCAL.
+
+    Reuses the PCM already synthesized for the socket rather than running Piper
+    a second time. The lock is held for the clip's real duration because
+    overlapping `termux-media-player play` calls do not mix — the second one
+    replaces the first mid-sentence — and in commentary mode replies arrive one
+    sentence at a time.
+    """
+    async with _LOCAL_SPEECH_LOCK:
+        try:
+            import termux_voice
+
+            await termux_voice.speak(_pcm_to_wav(pcm))
+        except Exception as exc:  # noqa: BLE001 - a mute phone must not kill the turn
+            print(f"[speak-local] playback failed: {exc!r}")
+
+
 async def _ws_send_tts(
     websocket: WebSocket,
     text: str,
@@ -2591,9 +2633,16 @@ async def _ws_send_tts(
     await websocket.send_json(
         _ws_frame("tts_start", turn_id, sample_rate=SAMPLE_RATE)
     )
+    collected: list[bytes] | None = [] if SPEAK_LOCAL else None
     async for chunk in synthesize_hal_stream_async(speakable(text)):
+        if collected is not None:
+            collected.append(chunk)
         await websocket.send_bytes(chunk)
     await websocket.send_json(_ws_frame("tts_done", turn_id))
+    if collected:
+        # After the socket has its audio, not before: the browser should not
+        # wait on the phone's speaker.
+        await _speak_on_device(b"".join(collected))
 
 
 async def _ws_abort_turn(
