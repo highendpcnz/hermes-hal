@@ -226,7 +226,28 @@ hold constant on a stationary board. ~0.6 s per read, consistent with hal's
 is paid every time.
 
 The board reports `mode=upload (not online, proceeding anyway)`. Telemetry
-works in that mode; entering genuine online mode is what motor control needs.
+works in that mode; **entering genuine online mode is what motor control
+needs**, and it is not optional. hal established on hardware that a real
+`drive_straight(5, 20)` sent in upload mode returns a clean, error-free
+response and moves nothing at all -- confirmed twice, encoder telemetry
+identical before and after (`termux-usb-bringup.md`). Getters read a register
+in any mode; actuation does not reach the motor driver, and the firmware
+acknowledges both cases identically.
+
+`robot/motion.py` and `robot/estop.py` therefore raise `CyberPiNotReadyError`
+outside online mode rather than proceeding, because a silent no-op is the one
+failure a stop client cannot have. Set it with:
+
+```bash
+curl -X POST http://127.0.0.1:8000/internal/robot/mode \
+  -H 'Content-Type: application/json' \
+  -d '{"session_token":"<session>","arguments":{"mode":"online"}}'
+```
+
+The call verifies by reading the mode back on a fresh transport. **Mode does
+not survive a board reset** -- the CyberPi boots into upload, so re-issue this
+after every power cycle, including the brownouts that also invalidate the USB
+fd.
 
 Run it under a USB claim — the Android path needs the fd:
 

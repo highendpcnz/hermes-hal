@@ -372,12 +372,25 @@ def set_board_mode(mode: str, open_transport: Callable[[], object] | None = None
     robot/cyberpi.py.
 
     Not gated by HAL_ROBOT_MOTION: this turns no motors, and it is reversible.
-    Worth knowing before reaching for it — **upload mode does not block
-    motion.** robot/telemetry.py records that online-exec requests were
-    confirmed on real hardware to work regardless of reported mode, and that
-    the online-mode requirement was this client's own assumption rather than a
-    firmware precondition. So this is for matching mBlock's state, not for
-    unblocking anything.
+
+    **Online mode is required before any motion.** An earlier revision of this
+    docstring claimed the opposite, citing robot/telemetry.py's "mode is logged,
+    not enforced". That is true of telemetry and false of actuation, and the
+    over-generalisation is one hal made, caught on hardware, and reverted --
+    see docs/termux-usb-bringup.md. A real drive_straight(5, 20) sent in upload
+    mode returned a clean, error-free online-exec response and produced zero
+    physical movement, confirmed twice with an operator watching, encoder
+    telemetry bit-for-bit identical before and after. Getters read a register
+    in any mode; an actuation call needs genuine online mode to reach the motor
+    driver, and the firmware acknowledges both cases identically.
+
+    robot/motion.py and robot/estop.py therefore raise CyberPiNotReadyError
+    outside online mode rather than logging it, because a silent no-op is the
+    one failure a stop client cannot have. So this function is what makes
+    motion possible at all -- not merely cosmetic parity with mBlock.
+
+    Mode does not survive a board reset: the CyberPi boots into upload, so this
+    must be re-issued after every power cycle.
 
     The write is verified by reading the mode back, because the marker is a
     request rather than an acknowledgement — an unverified "ok" here would be a
