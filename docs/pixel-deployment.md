@@ -516,12 +516,56 @@ running drive (the bridge's real arrangement, where `run_motion` holds the
 transport for the duration), and any of this with the wheels down and the
 chassis loaded.
 
+## The crawl, driven by the agent on the floor, 2026-09-06
+
+**The first autonomous motion this repo has produced: 55 cm across a room in
+15 cm camera-checked steps, at 10% speed, yaw drifting 2 degrees over the whole
+run.** Before that the crawl had refused five consecutive episodes. Every
+refusal was correct given what the agent was told, and none of them were a
+sensor or safety failure — the agent was answering the wrong question.
+
+**The bug was the caption, not the gate.** `crawl_observe` reused `look`'s
+general prompt, which describes the room. A chair two and a half metres away
+came back as "a chair centered ahead", and the tool docstring told the agent
+that a description omitting a hazard is not evidence of safety — so it refused
+a 15 cm step over open floor, with ultrasonic reporting 300 cm. The same frame,
+under the two prompts:
+
+```
+general : A black wire grid barrier is positioned to the left. A chair and
+          various storage containers are located directly ahead and to the right.
+crawl   : The strip is clear floor. There are no obstacles in the path.
+```
+
+`CRAWL_VISION_PROMPT` asks a geometric question rather than a numeric one: this
+camera sits at floor level, so the bottom of the frame *is* the near ground.
+"Is the bottom third of the frame drivable" is something a captioning model can
+answer; "how many centimetres away is that chair" is not.
+
+The second refusal after that fix was a flat rug, correctly described and then
+treated as an obstacle. Blocked has since been defined as what it actually
+means — something the robot would hit, or an edge it would fall off. A floor
+covering it can roll onto is drivable ground. The physical interlocks were not
+touched: 15 cm segments, 10% speed, the 25 cm ultrasonic veto, and firmware
+self-termination are all as they were.
+
+**`HAL_AGENT_TIMEOUT` must exceed the crawl window.** The run above stopped at
+55 cm of a 200 cm budget because the *turn* timed out at 180 s while the episode
+had 300 s — one turn covers the arm prompt and the entire drive. Launch a robot
+deployment with `HAL_AGENT_TIMEOUT=420`. Note what that failure leaves behind:
+the episode stayed armed with 145 cm of budget and no agent driving it. Nothing
+moved, because every segment needs an explicit `crawl_step`, but an armed
+episode outliving the turn that was granted it is not the intent — disarm it
+(`/internal/robot/crawl/disarm`) if you see one.
+
 ## What still has to be proven on the device
 
-1. **No motion has been commanded from this repo.** Sensors are verified
-   against the real chassis (above); the motor path is not. Enable
-   `HAL_ROBOT_MOTION=1` only with a hand on the robot, and remember that a
-   stop cannot interrupt a drive once it starts.
+1. ~~No motion has been commanded from this repo.~~ Done — wheels lifted, then
+   on the floor, then driven by the agent under crawl (all above). Still true
+   and still load-bearing: enable `HAL_ROBOT_MOTION=1` only with a hand on the
+   robot, because a stop cannot interrupt a drive once it starts. What remains
+   untested is a stop issued from the *same* transport and process as a running
+   drive, which is the bridge's real arrangement.
 2. **Credentials.** `~/.hermes` exists on the phone but holds no `auth.json`,
    so the agent cannot answer anything yet. Run `hermes setup` on the device.
    Copying `auth.json` from another machine means sharing that credential with

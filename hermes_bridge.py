@@ -55,6 +55,12 @@ HERMES_ACP_BIN = os.path.expanduser(
     os.environ.get("HAL_HERMES_ACP_BIN", _default_hermes_executable("hermes-acp"))
 )
 AGENT_CWD = os.path.expanduser(os.environ.get("HAL_AGENT_CWD", str(Path(__file__).resolve().parent)))
+# 180s suits a spoken turn: long enough for tool use, short enough that a stuck
+# agent does not leave someone standing there. It is NOT long enough for a
+# crawl: one turn there covers the arm prompt plus a whole 300s episode, so a
+# robot deployment must raise this past HAL_CRAWL_MAX_SECONDS or the turn is cut
+# off mid-drive — as it was on 2026-09-06, 55 cm into a 200 cm budget, leaving
+# the episode armed with nothing driving it. See docs/pixel-deployment.md.
 AGENT_TIMEOUT = float(os.environ.get("HAL_AGENT_TIMEOUT", "180"))
 OFFLINE_PREFLIGHT = os.environ.get("HAL_OFFLINE_PREFLIGHT", "1").strip().lower() not in {
     "0",

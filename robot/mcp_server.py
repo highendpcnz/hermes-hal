@@ -167,10 +167,22 @@ def crawl_disarm(session_token: str) -> dict:
 def crawl_observe(session_token: str) -> dict:
     """Take a fresh photograph for the crawl and get it described, plus the
     current ultrasonic distance. Returns a capture_id you must pass to
-    crawl_step — an assessment of an older frame will be refused. Judge from
-    the description whether the path ahead is genuinely clear; say "blocked"
-    or use a low confidence if the description is vague, because a description
-    that does not mention a hazard is not evidence there is none."""
+    crawl_step — an assessment of an older frame will be refused.
+
+    Judge one narrow question: is the floor this robot is about to cross clear?
+    That is roughly 15 cm of ground, and the description is written to answer
+    exactly that. `ultrasonic_cm` is the distance to the nearest thing straight
+    ahead, so a large reading means nothing in the picture can reach this step
+    however much furniture the description names. A chair across the room is
+    not a reason to say blocked — the next step gets its own photograph.
+
+    Blocked means something the robot would hit, or an edge it would fall off:
+    an object lying in its path, a cable, a step down, a small ultrasonic
+    reading. A flat floor covering — a rug, a mat, a threshold strip — is
+    drivable ground, not an obstacle. Also say "blocked", or use a low
+    confidence, when the description is too vague to tell what is on the near
+    floor: vagueness about the ground immediately ahead is a real reason to
+    stop, where distant scenery is not."""
     return _post("/internal/robot/crawl/observe", {"session_token": session_token})
 
 

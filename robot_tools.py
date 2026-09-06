@@ -326,6 +326,31 @@ VISION_PROMPT = os.environ.get(
     "Mention obstacles, their rough direction, and anything a small wheeled "
     "robot would need to avoid. Do not speculate beyond what is visible.",
 )
+# The crawl asks a narrower question than `look` does, and the general prompt
+# above answers the wrong one. It captions the whole room, so a chair across
+# the room comes back as "a chair centered ahead" -- and the agent, told that a
+# description omitting a hazard is not evidence of safety, correctly refuses a
+# 15 cm step over open floor. Five consecutive episodes refused this way with
+# ultrasonic reporting 300 cm.
+#
+# The fix is geometric rather than numeric: this camera sits at floor level, so
+# the bottom of the frame *is* the near ground. Asking about that strip is a
+# question a captioning model can actually answer, where "how many centimetres
+# away is that chair" is not.
+CRAWL_VISION_PROMPT = os.environ.get(
+    "HAL_CRAWL_VISION_PROMPT",
+    "This camera is mounted at floor level on a small wheeled robot, looking "
+    "straight ahead. The robot is about to drive forward about 15 centimetres. "
+    "Answer only about the floor in the bottom third of the frame, directly "
+    "ahead of the robot: that strip is the ground it is about to cross. Say "
+    "whether that strip is drivable, and name anything the robot would hit or "
+    "fall off -- objects lying on it, cables, a step down, an edge. A flat "
+    "floor covering the robot can roll onto, such as a rug or a mat, is still "
+    "drivable ground: say what it is, and say it is flat. Furniture, people "
+    "and walls further back are not obstacles for this step; if you mention "
+    "them, say they are further away. Two short sentences. Do not speculate "
+    "beyond what is visible.",
+)
 
 
 def _key_from_hermes_env(name: str = "OLLAMA_API_KEY") -> str:
@@ -347,11 +372,16 @@ def _key_from_hermes_env(name: str = "OLLAMA_API_KEY") -> str:
     return ""
 
 
-def describe_frame(image_bytes: bytes, *, mime_type: str = "image/jpeg") -> dict:
+def describe_frame(
+    image_bytes: bytes, *, mime_type: str = "image/jpeg", prompt: str | None = None
+) -> dict:
     """Caption one frame with the vision model. Returns {"ok", "description"}.
 
     Reads the same provider config the agent uses, so there is one place the
     endpoint and key are configured rather than a second copy that can drift.
+
+    `prompt` overrides the general caption for callers asking a narrower
+    question — the crawl passes CRAWL_VISION_PROMPT; see it for why.
     """
     import base64
     import json as _json
@@ -368,7 +398,7 @@ def describe_frame(image_bytes: bytes, *, mime_type: str = "image/jpeg") -> dict
         "model": model,
         "max_tokens": 200,
         "messages": [{"role": "user", "content": [
-            {"type": "text", "text": VISION_PROMPT},
+            {"type": "text", "text": prompt or VISION_PROMPT},
             {"type": "image_url", "image_url": {
                 "url": f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"}},
         ]}],
@@ -682,7 +712,7 @@ def crawl_observe(session_id: str, *, data_dir=None) -> dict:
     result, image_bytes = capture_visual_scene(data_dir=data_dir)
     if image_bytes is None:
         return result
-    described = describe_frame(image_bytes)
+    described = describe_frame(image_bytes, prompt=CRAWL_VISION_PROMPT)
     if not described.get("ok"):
         return {"ok": False, "error": f"cannot assess without a description: {described.get('error')}"}
     try:
