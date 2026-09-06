@@ -470,6 +470,27 @@ which looked like a successful stop and was not: the collision landed during
 the drive's own setup conversation, so no motor ever started. Fire late enough
 to be sure the wheels are turning before reading anything into the result.
 
+**On the floor, commanded distance matches actual distance.** Wheels down,
+driving at a wall and using the ultrasonic delta as ground truth:
+
+```
+ultrasonic 69.8 -> 49.2 cm   = 20.6 cm travelled for a 20 cm command  (+3%)
+encoder travel 352.0 deg     (352.5 unloaded -- the load barely registers)
+yaw drift +1.0 deg over 20 cm
+```
+
+`drive_straight(+20)` drives forward. Encoders read `+352 / -352` identically
+in every run, lifted and loaded.
+
+A trap worth knowing, because it cost a stop-and-check: the first floor run
+showed the obstacle getting *further away* (111.7 -> 122.8 cm), which reads
+exactly like driving in reverse. It was not. Yaw between the two runs went 44
+to -33 degrees -- the chassis had been repositioned, and the beam slipped past
+a near edge onto something further back as it advanced. The ultrasonic is a
+cone, not a rangefinder: it is only ground truth against a flat surface square
+on. Check yaw before trusting a distance delta, and take a second reading
+before concluding the drive went backwards.
+
 Not yet tested: a stop issued from the *same* transport and process as a
 running drive (the bridge's real arrangement, where `run_motion` holds the
 transport for the duration), and any of this with the wheels down and the
